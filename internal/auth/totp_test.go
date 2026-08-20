@@ -503,3 +503,24 @@ func TestTOTPCodesAreStable(t *testing.T) {
 		}
 	}
 }
+
+// TestTOTPCounterClampsPreEpochTime is a regression guard.
+//
+// An earlier version converted Unix seconds straight to unsigned. A negative
+// value would wrap to near the top of the range, and since a code is only
+// accepted when its step is strictly greater than the last one seen, every
+// future code would be rejected — a permanent lockout from a clock problem.
+func TestTOTPCounterClampsPreEpochTime(t *testing.T) {
+	preEpoch := time.Date(1969, 7, 20, 20, 17, 0, 0, time.UTC)
+
+	got := totpCounter(preEpoch)
+	if got != 0 {
+		t.Fatalf("counter = %d for a pre-epoch time, want 0; a wrapped value would lock the user out", got)
+	}
+
+	// And a normal time must still produce a sane step.
+	now := totpCounter(time.Now())
+	if now == 0 || now > 1<<40 {
+		t.Fatalf("counter = %d for the current time, which is not plausible", now)
+	}
+}

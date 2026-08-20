@@ -20,14 +20,14 @@ Early development. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase plan.
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Foundations: config, storage, build, deploy | **complete** |
-| 1 | Identity & encrypted credential vault | vault complete; auth next |
-| 2 | SSH terminal | not started |
+| 1 | Identity, SSO, MFA & credential vault | **complete** |
+| 2 | SSH terminal | next |
 | 3 | SFTP file transfer | not started |
 | 4 | Import / export (SecureCRT, PuTTY, OpenSSH) | not started |
 | 5 | Tunnels & jump hosts | not started |
 | 6 | Telnet, serial & console servers | not started |
 | 7 | Power-user features (broadcast, snippets, triggers) | not started |
-| 8 | Enterprise (SSO, RBAC, session recording) | not started |
+| 8 | Enterprise (RBAC, session recording) | SSO delivered early, in Phase 1 |
 | 9 | Hardening & operations | not started |
 
 ## Design in one page
@@ -74,15 +74,46 @@ Host key verification is mandatory by default and a changed host key is a hard
 failure, not a warning. Full details and the threat model are in
 [`docs/SECURITY.md`](docs/SECURITY.md).
 
-## Building
+## Trying it
 
-Requires Go 1.23+ and (for the frontend) Node 20+ with pnpm.
+Requires Go 1.25+, and Node 22 with pnpm for the frontend.
 
 ```sh
-make test          # unit tests
-make test-race     # unit tests under the race detector
-make build         # produces bin/bkd
+make release                      # frontend, then the static binary
+
+./bin/bkd gen-master-key --config dev.yaml
+./bin/bkd admin create-user --config dev.yaml -email you@example.com -admin
+./bin/bkd serve --config dev.yaml
 ```
+
+Then open the address in `server.external_url`. Sign in, choose a vault
+passphrase, and generate a key.
+
+For single sign-on against Microsoft Entra, follow
+[`docs/SSO-SETUP.md`](docs/SSO-SETUP.md) and check it with:
+
+```sh
+./bin/bkd test-sso --config /etc/bkd/config.yaml
+```
+
+That performs real discovery against your tenant and reports Microsoft's own
+error code when something is wrong, which beats a blank sign-in page.
+
+## Building and testing
+
+```sh
+make test          # unit tests, on SQLite and — if BKD_TEST_POSTGRES_DSN is
+                   # set — PostgreSQL as well
+make test-race     # under the race detector
+make e2e           # browser tests against a freshly provisioned instance
+make sec           # gosec
+make vuln          # govulncheck
+make release       # frontend + static binary
+```
+
+The two database backends differ in placeholder syntax, type affinity and
+foreign key enforcement, so the suite runs against both rather than whichever
+the environment happened to select.
 
 ## Licence
 

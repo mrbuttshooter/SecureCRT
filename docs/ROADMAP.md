@@ -12,14 +12,25 @@ Repo scaffold, `Makefile`, config loader with validation, portable schema and
 migration runner, structured logging, health endpoints, hardened systemd unit,
 install script, CI.
 
-## Phase 1 — Identity and vault (vault complete)
+## Phase 1 — Identity and vault ✅
 
 - [x] Envelope encryption, key cache, master key handling
-- [ ] Local accounts, Argon2id login passwords
-- [ ] TOTP MFA with recovery codes
-- [ ] Access and refresh tokens, server-side revocation
-- [ ] Credential CRUD; in-app key generation (ed25519 / RSA-4096 / ECDSA)
-- [ ] Rate limiting and account lockout
+- [x] Local accounts, Argon2id login passwords
+- [x] Single sign-on against Microsoft Entra (pulled forward from Phase 8)
+- [x] TOTP MFA with recovery codes; Entra's own MFA honoured via `amr`
+- [x] Opaque session tokens, sliding idle plus hard absolute expiry, revocation
+- [x] Credential CRUD; in-app key generation (ed25519 / RSA-4096 / ECDSA)
+- [x] Key import (OpenSSH and PEM, encrypted or not)
+- [x] Rate limiting and account lockout
+- [x] Append-only audit log
+- [x] Admin CLI and `bkd test-sso`
+- [x] Web interface, embedded in the binary
+- [ ] WebAuthn for local accounts — deferred; see below
+
+**WebAuthn was deliberately deferred.** Entra already covers multi-factor
+authentication for everyone who signs in through it, so WebAuthn would only
+protect the handful of break-glass local accounts. It is worth doing, but not
+before the terminal exists.
 
 ## Phase 2 — SSH terminal
 

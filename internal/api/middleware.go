@@ -257,6 +257,10 @@ func verifyCSRFToken(key vault.Key, token string) bool {
 // a header, and that echo is the half of the check a cross-origin page cannot
 // perform. The token is not a credential on its own.
 func csrfCookie(token string, secure bool) *http.Cookie {
+	// #nosec G124 -- HttpOnly is false deliberately, and that is the entire
+	// mechanism: the page must read this value to echo it in a header, which
+	// is the half of the double-submit check a cross-origin page cannot
+	// perform. The token is signed and is not a credential on its own.
 	return &http.Cookie{
 		Name:     auth.CSRFCookieName,
 		Value:    token,

@@ -29,6 +29,10 @@ import (
 // rule written against one of these should not break on a refactor.
 type Action string
 
+// #nosec G101 -- these are event names written into the audit log, not
+// credentials. Static analysis flags identifiers containing "secret" and
+// "passphrase" by name; renaming them to appease it would make the log
+// harder to read for no security benefit.
 const (
 	// Authentication.
 	ActionLoginSucceeded Action = "auth.login.succeeded"

@@ -146,9 +146,18 @@ func TOTPCode(secret string, at time.Time) (string, error) {
 	return TOTPCodeAt(secret, totpCounter(at), TOTPSHA1, TOTPDigits)
 }
 
+// totpCounter converts a wall-clock time to an RFC 6238 time step.
+//
+// A time before the Unix epoch is clamped to step zero rather than wrapping a
+// negative value into an enormous unsigned one. No real clock produces that,
+// but the wrapped result would be far worse than the clamp: every subsequent
+// code would compare against a step near the top of the range and be rejected.
 func totpCounter(at time.Time) uint64 {
-	//nolint:gosec // Unix() is positive for any time this system will see
-	return uint64(at.Unix()) / uint64(TOTPPeriod.Seconds())
+	seconds := at.Unix()
+	if seconds < 0 {
+		return 0
+	}
+	return uint64(seconds) / uint64(TOTPPeriod.Seconds())
 }
 
 // TOTPResult reports a successful verification and the time step that matched.

@@ -466,6 +466,11 @@ func (s *SessionStore) PurgeExpired(ctx context.Context, revokedGrace time.Durat
 // annoyance in exchange for closing the cross-site request forgery class
 // almost entirely, before the CSRF token is even considered.
 func (c SessionConfig) SessionCookie(token string) *http.Cookie {
+	// #nosec G124 -- Secure is set from configuration rather than a literal,
+	// which static analysis cannot follow. It defaults to true and the only
+	// supported reason to disable it is local development over plain HTTP,
+	// where a Secure cookie would simply never be sent. Startup logs a
+	// warning when it is off.
 	return &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    token,
@@ -479,6 +484,8 @@ func (c SessionConfig) SessionCookie(token string) *http.Cookie {
 
 // ClearSessionCookie builds the Set-Cookie that removes the session cookie.
 func (c SessionConfig) ClearSessionCookie() *http.Cookie {
+	// #nosec G124 -- see SessionCookie. The clearing cookie must carry the
+	// same attributes as the one it replaces, or some browsers ignore it.
 	return &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    "",

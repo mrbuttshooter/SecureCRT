@@ -132,6 +132,34 @@ Shared team credentials use a team DEK sealed once per member under that
 member's personal DEK. Adding a member reseals; removing one deletes their
 row. No plaintext key is written at any point.
 
+## Single sign-on and the vault
+
+This is the decision worth putting in front of whoever owns security before
+rollout, because it determines whether T1 and T2 above hold at all for the
+majority of users.
+
+With a local password, the server sees the password at sign-in, so it can
+derive the user's vault key from it (under a different salt, so the stored
+login hash gives no head start) and the user notices nothing.
+
+**With single sign-on there is no password to derive from.** Entra returns an
+identity token, not a secret. So there are exactly two options, and they are
+not equivalent:
+
+| `vault.sso_unlock_mode` | What the user does | What a stolen database **and** master key yields |
+|---|---|---|
+| `passphrase` *(default)* | Types a vault passphrase once per working day, after the Microsoft redirect | **Nothing.** T1 and T2 hold. |
+| `server_managed` | Nothing extra — signing in opens everything | **Every credential in the system.** |
+
+`server_managed` is what most commercial web-SSH products do. It is a
+defensible choice for a team that judges the operational simplicity worth it.
+But it silently discards the property this system was built around, so it is
+not the default, `bkd` logs a warning at every startup in that mode, and
+affected credentials are marked in the interface.
+
+With `unlock_ttl` at its default of 12 hours, the real cost of the secure
+option is one extra prompt each morning.
+
 ## Key lifetime in memory
 
 Data-encryption keys are unwrapped at login and cached in memory only:
@@ -183,6 +211,23 @@ used, file transfers, tunnel creation, **every import and export**, and all
 admin actions.
 
 Audit detail fields never contain secret material.
+
+## What is enforced where
+
+Some properties are easier to state than to keep. These are the ones with a
+test that fails if they regress, rather than only a convention:
+
+| Property | Enforced by |
+|---|---|
+| A stolen ciphertext cannot be moved to another user or record | GCM additional authenticated data; tests perform the relocation directly against the database |
+| The private half of a key never reaches the browser | `Credential` has no field able to hold it (asserted by reflection); a browser test scans the rendered page |
+| A wrong password and an unknown account are indistinguishable | Responses compared byte-for-byte in a test; a dummy Argon2id verification equalises the timing |
+| Session tokens are useless from a database dump | Only a SHA-256 is stored; asserted in a test |
+| Audit records never carry secrets | Detail keys screened against a deny list; the write is refused |
+| The audit log cannot be rewritten by the application | A test reads the package source and fails on any `UPDATE`/`DELETE` against `audit_events` |
+| Cookies keep their security attributes | Read back from a real browser and asserted |
+| The content security policy is not quietly relaxed | Browser tests fail on any console error, which is the only way a violation surfaces |
+| Queries work on PostgreSQL, not just SQLite | An AST-walking test rejects `ExecContext`/`QueryContext` outside `internal/store`, since those bypass placeholder rewriting |
 
 ## Reporting a vulnerability
 

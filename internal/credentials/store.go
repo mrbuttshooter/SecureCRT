@@ -89,6 +89,10 @@ func NewStore(db *store.DB) *Store {
 	return &Store{db: db, now: time.Now}
 }
 
+// #nosec G101 -- a column list, not a credential. It names public_key and
+// key_type, which trips the hardcoded-credential heuristic; the encrypted
+// columns are deliberately absent so a SELECT built from this can never
+// return secret material by accident.
 const credentialColumns = `
 	id, user_id, team_id, name, kind, username,
 	public_key, fingerprint, key_type, server_unlockable,

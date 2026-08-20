@@ -428,7 +428,15 @@ func (a *API) loadTOTPSecret(ctx context.Context, key vault.Key, userID string) 
 		return "", 0, fmt.Errorf("api: decrypt TOTP secret: %w", err)
 	}
 
-	//nolint:gosec // last_step is a time-step counter, always non-negative
+	// A negative last_step means the row is corrupt. Converting it would wrap
+	// to a value near the top of the unsigned range, and since a code is only
+	// accepted when its step is strictly greater, that would reject every
+	// future code and lock the user out permanently. Failing loudly is far
+	// better than that.
+	if lastStep < 0 {
+		return "", 0, fmt.Errorf("api: TOTP record for user %s has a negative step (%d); the row is corrupt", userID, lastStep)
+	}
+
 	return string(plaintext), uint64(lastStep), nil
 }
 

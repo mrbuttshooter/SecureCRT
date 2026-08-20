@@ -177,6 +177,12 @@ func (a *API) handleSSOStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.SetCookie(w, cookie)
+
+	// #nosec G710 -- authURL is built by the OAuth2 library from the
+	// discovered provider endpoint and this deployment's configured client
+	// ID, not from request input. The one caller-supplied value, return_to,
+	// is restricted to same-site relative paths by sanitizeReturnTo and
+	// travels inside the signed state cookie rather than in this URL.
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
