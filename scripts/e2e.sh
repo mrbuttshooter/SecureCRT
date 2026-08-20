@@ -27,13 +27,14 @@ WORKDIR="$(mktemp -d)"
 SERVER_PID=""
 SSHD_PID=""
 SSHD2_PID=""
+BASTION_PID=""
 
 SSH_USER="tester"
 SSH_PASSWORD="a throwaway ssh password"
 
 # shellcheck disable=SC2317  # called by the EXIT trap, which shellcheck cannot see
 cleanup() {
-    for pid in "$SERVER_PID" "$SSHD_PID" "$SSHD2_PID"; do
+    for pid in "$SERVER_PID" "$SSHD_PID" "$SSHD2_PID" "$BASTION_PID"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -74,6 +75,20 @@ auth:
   # The suite speaks plain HTTP to a loopback address, so Secure cookies would
   # simply never be sent.
   secure_cookies: false
+policy:
+  # On here, off in the shipped default, and the difference is the point: the
+  # tunnels spec checks both halves — that a listener genuinely carries
+  # traffic, and that a kind still switched off is refused with the setting
+  # named rather than a button that does nothing.
+  #
+  # tunnels.domain stays unset, so web tunnels remain unavailable. There is
+  # nowhere safe to serve a device's own pages from without one, and a test
+  # instance is not an exception to that.
+  allow_tcp_tunnels: true
+  allow_remote_forwards: false
+tunnels:
+  bind: "127.0.0.1"
+  port_range: "34700-34799"
 paths:
   data_dir: "${WORKDIR}/data"
   session_log_dir: "${WORKDIR}/data/logs"
@@ -92,7 +107,7 @@ EOF
 # experience or on an empty list would then depend on which file happened to
 # run first. An earlier version did, and broke the moment a third spec was
 # added.
-for account in admin terminal files transfer; do
+for account in admin terminal files transfer tunnels; do
     echo "a very long admin password" | \
         ./bin/bkd admin create-user --config "$WORKDIR/config.yaml" \
             -email "${account}@example.com" -name "Test ${account}" -admin >/dev/null
@@ -137,8 +152,10 @@ export BKD_E2E_PUTTY_ZIP="$WORKDIR/putty.zip"
 # and that a file uploaded through the browser lands on a real filesystem this
 # script can then read.
 #
-# Two of them, because copying a directory from one managed host straight to
-# another is the feature that needs two hosts to test at all.
+# Three of them. Two, because copying a directory from one managed host
+# straight to another is the feature that needs two hosts to test at all — and
+# a third acting as a bastion, because a jump host only proves anything if the
+# device behind it is genuinely reached through it.
 info "building the test SSH server"
 go build -tags tools -o "$WORKDIR/testsshd" ./tools/testsshd
 
@@ -177,9 +194,11 @@ start_sshd() {
 info "starting the test SSH servers"
 SSHD_PID="$(start_sshd sshd)"
 SSHD2_PID="$(start_sshd sshd2)"
+BASTION_PID="$(start_sshd bastion)"
 SSH_PORT="$(cat "$WORKDIR/sshd.port")"
 SSH_PORT_2="$(cat "$WORKDIR/sshd2.port")"
-info "test SSH servers on 127.0.0.1:${SSH_PORT} and 127.0.0.1:${SSH_PORT_2}"
+BASTION_PORT="$(cat "$WORKDIR/bastion.port")"
+info "test SSH servers on 127.0.0.1:${SSH_PORT}, 127.0.0.1:${SSH_PORT_2}, bastion on 127.0.0.1:${BASTION_PORT}"
 
 info "starting bkd on ${BASE_URL}"
 ./bin/bkd serve --config "$WORKDIR/config.yaml" > "$WORKDIR/server.log" 2>&1 &
@@ -223,6 +242,7 @@ set +e
     BKD_E2E_SSH_HOST="127.0.0.1" \
     BKD_E2E_SSH_PORT="$SSH_PORT" \
     BKD_E2E_SSH_PORT_2="$SSH_PORT_2" \
+    BKD_E2E_BASTION_PORT="$BASTION_PORT" \
     BKD_E2E_SSH_USER="$SSH_USER" \
     BKD_E2E_SSH_PASSWORD="$SSH_PASSWORD" \
     BKD_E2E_CHROMIUM="${BKD_E2E_CHROMIUM:-}" \
@@ -237,7 +257,7 @@ if [[ $STATUS -ne 0 ]]; then
     echo "--- server log ---" >&2
     cat "$WORKDIR/server.log" >&2
     echo "--- test ssh server logs ---" >&2
-    cat "$WORKDIR/sshd.log" "$WORKDIR/sshd2.log" >&2
+    cat "$WORKDIR/sshd.log" "$WORKDIR/sshd2.log" "$WORKDIR/bastion.log" >&2
 fi
 
 exit $STATUS

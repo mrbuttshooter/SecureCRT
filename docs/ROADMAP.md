@@ -135,13 +135,65 @@ Two things named in the original scope are worth being explicit about:
   `policy.allow_plaintext_export` says. Refusing it would be holding people by
   making the exit difficult, which is not what that setting is for.
 
-## Phase 5 — Tunnels and jump hosts — next
+## Phase 5 — Tunnels and jump hosts ✅
 
-Proxy-jump chains of arbitrary depth with per-hop credentials, local and
-remote port forwarding, dynamic SOCKS5, X11 forwarding, agent forwarding with
-per-session opt-in, tunnel manager UI.
+- [x] Jump chains of arbitrary depth, matching OpenSSH `ProxyJump`, expanded
+      recursively so a hop that has jump hosts of its own is followed
+- [x] Per-hop identity: each hop authenticates with its own credential and is
+      host-key verified under its own hostname, in its own right
+- [x] One bastion, many devices — fifty connections behind a bastion take
+      fifty references on one bastion connection, which on equipment counting
+      vty lines is the difference between working and not
+- [x] Jump chains validated when saved and when dialled: cycles,
+      self-reference, unknown or unowned hosts, non-SSH hops, depth
+- [x] A device's own web interface, proxied over SSH and served from a
+      separate origin
+- [x] Listening ports on this server, and dynamic SOCKS5, both off by default
+- [x] Remote forwarding (`ssh -R`), off by default, with loopback and
+      link-local destinations refused outright
+- [x] Agent forwarding from a server-side keyring, per connection, never
+      inherited from a folder
+- [x] Tunnel manager, and a jump-host editor in the connection form — the
+      field had been stored, imported and exported since Phase 2 with no way
+      to see it
+- [x] [`docs/TUNNELS.md`](TUNNELS.md)
+- [x] Browser end-to-end suite through a bastion
 
-## Phase 6 — Telnet, serial and console servers
+**Three items in the original scope did not survive contact with a browser,
+and pretending otherwise would have produced features nobody could use.**
+
+- **A local port forward has nowhere to listen.** `ssh -L` opens a port on
+  *your laptop*; a web page cannot open a listening socket, and bkd is not on
+  your laptop. So it became two things: an authenticated HTTP proxy for the
+  common case — reaching a switch's web interface through a bastion, needing
+  no open port and nothing installed anywhere — and a raw TCP listener **on
+  the bkd host** for everything that is not HTTP, off by default because it
+  accepts inbound connections on a shared machine.
+
+- **The web proxy cannot be same-origin, so without a domain it is not
+  offered at all.** `bkd_csrf` is readable by JavaScript by design, and the
+  session cookie rides same-origin requests automatically, so a script on one
+  compromised switch would hold a user's entire API access. Each tunnel is
+  served from its own hostname under a configured wildcard domain instead.
+  Unset means unavailable, and the interface says which setting is missing.
+
+- **X11 forwarding is dropped, not deferred.** There is no X server in a
+  browser, so there is nowhere for a window to appear. Building one — an X11
+  protocol implementation rendering to canvas — is a larger project than the
+  rest of this phase combined, and serves a case a team migrating off
+  SecureCRT on Windows almost certainly does not have.
+
+Two more things are deliberately absent:
+
+- **Tunnels do not survive a restart.** A tunnel holds a live SSH connection;
+  after a restart there is no connection, so a persisted row would describe
+  something that is gone. The same reasoning already keeps terminals and file
+  sessions out of the schema, and it is why this phase adds no migration.
+- **SOCKS is CONNECT only.** No BIND, no UDP associate: both need the proxy to
+  accept inbound traffic on a client's behalf, which is a second listening
+  surface for a use case that has no place in reaching network equipment.
+
+## Phase 6 — Telnet, serial and console servers — next
 
 Telnet with full option negotiation (NAWS, TTYPE, ECHO, SGA). Serial over
 `/dev/ttyUSB*` — which only works where the server is physically cabled to the

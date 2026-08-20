@@ -232,6 +232,16 @@ export interface Settings {
   scrollback?: number | null
   keepalive_seconds?: number | null
   log_session?: boolean | null
+
+  /**
+   * Keys to offer through a forwarded SSH agent. Empty or absent means none,
+   * which is the only sensible default.
+   *
+   * Never inherited from a folder — the server refuses this on a folder
+   * outright, because a default here would offer the keys to every host
+   * inside it, including hosts added later.
+   */
+  agent_forward_credentials?: string[] | null
 }
 
 export interface Folder {
@@ -642,4 +652,48 @@ export async function exportConnections(request: ExportRequest): Promise<Exporte
     filename: match?.[1] ?? 'export',
     warnings,
   }
+}
+
+/** What this server will and will not do with tunnels. */
+export interface TunnelConfig {
+  /** Web tunnels need a wildcard domain; without one they are unavailable. */
+  web_enabled: boolean
+  /** Listening ports on this server, gated by policy.allow_tcp_tunnels. */
+  listeners_enabled: boolean
+  /** Remote forwards, gated by policy.allow_remote_forwards. */
+  remote_enabled: boolean
+  domain: string
+}
+
+export type TunnelKind = 'web' | 'local' | 'socks' | 'remote'
+
+export interface TunnelHop {
+  session_id: string
+  name: string
+  hostname: string
+  port: number
+  index: number
+  total: number
+}
+
+export interface Tunnel {
+  id: string
+  kind: TunnelKind
+  state: 'open' | 'closed' | 'failed'
+  session_id: string
+  label: string
+  via?: TunnelHop[]
+  /** Where to point a client. On the device, for a remote forward. */
+  listen?: string
+  /** The fixed address at the far end of the forwarding. */
+  remote?: string
+  /** Where a web tunnel is served, on its own origin. */
+  url?: string
+  connections: number
+  active: number
+  bytes_up: number
+  bytes_down: number
+  opened_at: string
+  last_used_at: string
+  error?: string
 }

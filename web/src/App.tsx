@@ -10,8 +10,11 @@ import { Workspace } from './views/Workspace'
 import { KnownHosts } from './views/KnownHosts'
 import { Files } from './views/Files'
 import { Transfer } from './views/Transfer'
+import { Tunnels } from './views/Tunnels'
 
-type Tab = 'terminal' | 'files' | 'credentials' | 'hosts' | 'transfer' | 'sessions' | 'security'
+type Tab =
+  | 'terminal' | 'files' | 'tunnels' | 'credentials'
+  | 'hosts' | 'transfer' | 'sessions' | 'security'
 
 /**
  * App decides what to show from a single whoami response.
@@ -119,6 +122,8 @@ export function App() {
                 onClick={() => setTab('terminal')}>Terminal</button>
         <button aria-current={tab === 'files' ? 'page' : undefined}
                 onClick={() => setTab('files')}>Files</button>
+        <button aria-current={tab === 'tunnels' ? 'page' : undefined}
+                onClick={() => setTab('tunnels')}>Tunnels</button>
         <button aria-current={tab === 'credentials' ? 'page' : undefined}
                 onClick={() => setTab('credentials')}>Credentials</button>
         <button aria-current={tab === 'hosts' ? 'page' : undefined}
@@ -141,6 +146,7 @@ export function App() {
         <Workspace active={tab === 'terminal'} />
       </div>
       {tab === 'files' && <Files />}
+      {tab === 'tunnels' && <Tunnels />}
       {tab === 'credentials' && <Credentials />}
       {tab === 'hosts' && <KnownHosts />}
       {tab === 'transfer' && <Transfer />}

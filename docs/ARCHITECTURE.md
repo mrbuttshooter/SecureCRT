@@ -10,11 +10,14 @@ nginx / Caddy  ── TLS termination, on the same host
       │  HTTP to 127.0.0.1
       ▼
 bkd  ── one static Go binary, systemd unit, unprivileged user
-      ├── internal/api        REST handlers, middleware
-      ├── internal/wsmux      WebSocket multiplexer (terminal, transfers, tunnels)
+      ├── internal/api        REST handlers, middleware, the WebSocket bridges
       ├── internal/vault      envelope encryption, in-memory key cache
       ├── internal/auth       Argon2id, TOTP, tokens, OIDC/SAML
-      ├── internal/proto      ssh · sftp · telnet · serial · tunnel
+      ├── internal/proto      sshx · sftpx · tunnel
+      ├── internal/remote     the shared connection pool and the dial path
+      ├── internal/terminal   live shells, replay buffers, reattachment
+      ├── internal/files      SFTP sessions and the transfer engine
+      ├── internal/sessions   the saved connection tree and jump chains
       ├── internal/portability import/export adapters
       ├── internal/store      schema, migrations, data access
       ├── internal/audit      append-only event log

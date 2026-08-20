@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ApiError, api, type Credential, type SavedSession, type Settings } from '../api'
+import {
+  ApiError, api,
+  type Credential, type SavedSession, type Settings, type Tree,
+} from '../api'
 
 export interface SessionEditorProps {
   /** The connection being edited, or null when creating one. */
@@ -40,7 +43,18 @@ export function SessionEditor(props: SessionEditorProps) {
     editing?.settings?.scrollback != null ? String(editing.settings.scrollback) : '',
   )
 
+  // The jump chain has been stored, imported, exported and dialled since
+  // Phase 5a, and until now there has been no way to see or set it. An
+  // imported SecureCRT tree arrives with firewalls already resolved, so this
+  // form is often the first place a person finds out a route exists.
+  const [jumpChain, setJumpChain] = useState<string[]>(editing?.jump_chain ?? [])
+
+  const [agentKeys, setAgentKeys] = useState<string[]>(
+    editing?.settings?.agent_forward_credentials ?? [],
+  )
+
   const [credentials, setCredentials] = useState<Credential[]>([])
+  const [hosts, setHosts] = useState<SavedSession[]>([])
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -50,6 +64,27 @@ export function SessionEditor(props: SessionEditorProps) {
       .then((r) => setCredentials(r.credentials ?? []))
       .catch(() => setCredentials([]))
   }, [])
+
+  useEffect(() => {
+    void api
+      .get<Tree>('/api/tree')
+      .then((r) => setHosts(r.sessions ?? []))
+      .catch(() => setHosts([]))
+  }, [])
+
+  // A connection cannot be its own jump host, so it is not offered as one.
+  // The server refuses it too — this only keeps the list honest.
+  const candidates = hosts.filter((h) => h.id !== editing?.id && h.protocol === 'ssh')
+  const keyCredentials = credentials.filter((c) => c.kind === 'ssh_key')
+
+  const setHop = (index: number, id: string) => {
+    setJumpChain((prev) => {
+      const next = [...prev]
+      if (id === '') next.splice(index, 1)
+      else next[index] = id
+      return next
+    })
+  }
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -62,6 +97,9 @@ export function SessionEditor(props: SessionEditorProps) {
     const settings: Settings = {
       keepalive_seconds: keepalive ? Number(keepalive) : null,
       scrollback: scrollback ? Number(scrollback) : null,
+      // An empty list is sent as null rather than [], so "no agent" is one
+      // state on the wire rather than two that have to agree.
+      agent_forward_credentials: agentKeys.length > 0 ? agentKeys : null,
     }
 
     const body = {
@@ -72,6 +110,7 @@ export function SessionEditor(props: SessionEditorProps) {
       port: port ? Number(port) : 0,
       username: username.trim(),
       credential_id: credentialId,
+      jump_chain: jumpChain.filter(Boolean),
       settings,
     }
 
@@ -138,6 +177,76 @@ export function SessionEditor(props: SessionEditorProps) {
           ))}
         </select>
       </label>
+
+      <fieldset>
+        <legend>Jump hosts</legend>
+        <p className="muted">
+          Reached through these, in order, the way OpenSSH{"'"}s ProxyJump works.
+          Each hop is a saved connection with its own credential and its own
+          host key check, and one bastion is shared by every connection behind
+          it rather than dialled again for each.
+        </p>
+
+        {jumpChain.map((hop, index) => (
+          <label key={index}>
+            Hop {index + 1}
+            <select value={hop} onChange={(e) => setHop(index, e.target.value)}>
+              <option value="">Remove this hop</option>
+              {candidates.map((c) => (
+                <option key={c.id} value={c.id}>{c.name} · {c.hostname}</option>
+              ))}
+            </select>
+          </label>
+        ))}
+
+        <label>
+          Add a jump host
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) setJumpChain((prev) => [...prev, e.target.value])
+            }}
+          >
+            <option value="">Choose a saved connection…</option>
+            {candidates.map((c) => (
+              <option key={c.id} value={c.id}>{c.name} · {c.hostname}</option>
+            ))}
+          </select>
+        </label>
+      </fieldset>
+
+      <details>
+        <summary>Agent forwarding</summary>
+        <p className="muted">
+          Offers the keys you choose to this host, so you can authenticate
+          onward from it without the keys ever being on the remote machine.
+        </p>
+        <p className="warn">
+          While this connection is open, the host can use these keys to
+          authenticate anywhere they are accepted, and there is no way to tell
+          its use from yours. Choose only what the host needs, and only on
+          hosts you trust. This cannot be set on a folder.
+        </p>
+
+        {keyCredentials.length === 0 ? (
+          <p className="muted">You have no SSH keys stored. Only keys can be forwarded.</p>
+        ) : (
+          keyCredentials.map((c) => (
+            <label key={c.id} className="check">
+              <input
+                type="checkbox"
+                checked={agentKeys.includes(c.id)}
+                onChange={(e) =>
+                  setAgentKeys((prev) =>
+                    e.target.checked ? [...prev, c.id] : prev.filter((id) => id !== c.id),
+                  )
+                }
+              />
+              {c.name} · {c.key_type || 'key'}
+            </label>
+          ))
+        )}
+      </details>
 
       <details>
         <summary>Advanced</summary>

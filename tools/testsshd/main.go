@@ -56,6 +56,8 @@ func main() {
 		log.Fatalf("testsshd: %v", err)
 	}
 
+	forwarder := &gssh.ForwardedTCPHandler{}
+
 	srv := &gssh.Server{
 		HostSigners: []gssh.Signer{signer},
 		PasswordHandler: func(ctx gssh.Context, given string) bool {
@@ -64,6 +66,27 @@ func main() {
 		Handler: func(s gssh.Session) { runShell(s, *shell) },
 		SubsystemHandlers: map[string]gssh.SubsystemHandler{
 			"sftp": serveSFTP,
+		},
+		// Forwarding, so one of these can act as a bastion for another and a
+		// tunnel has something real to run over.
+		//
+		// Naming ChannelHandlers at all replaces the default map rather than
+		// adding to it, so "session" has to be listed here too — leaving it
+		// out would produce a server that forwards perfectly and cannot open
+		// a shell.
+		ChannelHandlers: map[string]gssh.ChannelHandler{
+			"session":      gssh.DefaultSessionHandler,
+			"direct-tcpip": gssh.DirectTCPIPHandler,
+		},
+		LocalPortForwardingCallback: func(_ gssh.Context, _ string, _ uint32) bool {
+			return true
+		},
+		ReversePortForwardingCallback: func(_ gssh.Context, _ string, _ uint32) bool {
+			return true
+		},
+		RequestHandlers: map[string]gssh.RequestHandler{
+			"tcpip-forward":        forwarder.HandleSSHRequest,
+			"cancel-tcpip-forward": forwarder.HandleSSHRequest,
 		},
 	}
 

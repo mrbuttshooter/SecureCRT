@@ -342,11 +342,57 @@ retention requires an explicit admin command that archives before pruning.
 
 Recorded: logins and failures, vault unlock attempts, credential create /
 read / update / delete, every connection with its target and the credential
-used, file transfers, tunnel creation, **every import and export** — including
-those run from the command line, which are recorded against the account they
-happened to — and all admin actions.
+used, file transfers, tunnel creation and closure, **every import and export**
+— including those run from the command line, which are recorded against the
+account they happened to — and all admin actions.
 
-Audit detail fields never contain secret material.
+Three tunnel events carry a severity floor, so they survive whatever retention
+an operator sets for ordinary activity:
+
+| Event | Why it outlives ordinary retention |
+|---|---|
+| `tunnel.listener.opened` | A port was opened on this server. Whoever can reach the bind address reaches what is behind it, with no account here at all. |
+| `tunnel.remote.opened` | A device was asked to listen on this server's behalf. Whoever reaches that port on the device reaches this server's network. |
+| `agent.forwarded` | Keys were exposed to a remote host. It can use them to authenticate anywhere they are accepted, for as long as the connection lives, and nothing distinguishes its use from the user's. |
+
+`agent.forwarded` names the keys in `keys_offered`, and records whether the
+host accepted them. "Which keys were in that switch's reach, and when" is a
+question asked after the fact, and it needs an answer that does not depend on
+the connection still being open.
+
+Audit detail fields never contain secret material. The recorder drops any
+detail key containing a forbidden substring — `password`, `secret`,
+`private_key` and the rest — which is why the field above is `keys_offered`
+and not something that reads more naturally.
+
+## Tunnels
+
+The reasoning behind each tunnel shape, and what each one exposes, is in
+[`docs/TUNNELS.md`](TUNNELS.md). Three properties belong here:
+
+**A device's own web pages are never served from bkd's origin.** `bkd_csrf` is
+readable by JavaScript — that is how double-submit works — and the session
+cookie is attached to same-origin requests automatically. A script on one
+compromised switch would therefore hold the user's whole API access: every
+credential they can decrypt, every host they can reach. `script-src 'self'`
+does not help, because the device's scripts would *be* self. So each tunnel is
+served from its own hostname under a configured wildcard domain, and with no
+domain configured the feature is unavailable rather than unsafe.
+
+**A remote forward cannot reach this server's interior.** Loopback,
+link-local, unspecified and multicast destinations are refused, and the check
+runs against resolved addresses on every connection rather than once when the
+tunnel opens — a name that answers a routable address now and `127.0.0.1`
+later is a twenty-year-old technique, not an exotic one. A name is refused
+entirely if *any* of its answers is refused, because which address a dialler
+picks is not something this code decides.
+
+**Agent forwarding is never inherited from a folder.** `Settings.merge` fills
+every unset field from the parent folder except this one. A folder default
+would offer somebody's keys to every host inside it, including hosts added
+later by somebody else, and the person who set the default would be the last
+to know. The interface refuses the setting on a folder outright rather than
+storing something inert.
 
 ## What is enforced where
 
