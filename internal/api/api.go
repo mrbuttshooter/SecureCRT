@@ -11,7 +11,10 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/auth"
 	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
+	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
+	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store"
+	"github.com/mrbuttshooter/securecrt/internal/terminal"
 	"github.com/mrbuttshooter/securecrt/internal/users"
 	"github.com/mrbuttshooter/securecrt/internal/vault"
 )
@@ -55,6 +58,13 @@ type API struct {
 	credentials *credentials.Store
 	audit       *audit.Recorder
 
+	// The terminal side: the saved-connection tree, the live terminals, and
+	// the connector that joins them to SSH.
+	sessionTree *sessions.Store
+	terminals   *terminal.Manager
+	connector   *terminal.Connector
+	hostKeys    *hostkeys.Store
+
 	// csrfKey signs CSRF tokens. An HKDF subkey of the master key, so the
 	// service needs no additional secret on disk.
 	csrfKey vault.Key
@@ -71,6 +81,11 @@ type Deps struct {
 	Credentials *credentials.Store
 	Audit       *audit.Recorder
 	MasterKey   vault.Key
+
+	SessionTree *sessions.Store
+	Terminals   *terminal.Manager
+	Connector   *terminal.Connector
+	HostKeys    *hostkeys.Store
 }
 
 // New builds an API.
@@ -95,6 +110,10 @@ func New(cfg Config, deps Deps, log *slog.Logger) (*API, error) {
 		oidc:        deps.OIDC,
 		credentials: deps.Credentials,
 		audit:       deps.Audit,
+		sessionTree: deps.SessionTree,
+		terminals:   deps.Terminals,
+		connector:   deps.Connector,
+		hostKeys:    deps.HostKeys,
 		csrfKey:     csrfKey,
 	}, nil
 }
@@ -184,9 +203,21 @@ func (a *API) Routes() http.Handler {
 		"GET /api/credentials", "POST /api/credentials", "GET /api/credentials/{id}",
 		"PATCH /api/credentials/{id}", "DELETE /api/credentials/{id}",
 		"POST /api/credentials/generate", "POST /api/credentials/import",
+		"GET /api/tree", "POST /api/tree/folders", "PATCH /api/tree/folders/{id}",
+		"DELETE /api/tree/folders/{id}", "POST /api/tree/sessions",
+		"PATCH /api/tree/sessions/{id}", "DELETE /api/tree/sessions/{id}",
+		"GET /api/tree/sessions/{id}/resolved",
+		"GET /api/terminals", "DELETE /api/terminals/{id}",
+		"GET /api/known-hosts", "DELETE /api/known-hosts/{id}",
 	} {
 		mux.Handle(route, full)
 	}
+
+	// The terminal socket carries its own protocol and cannot go through the
+	// JSON error paths, so it is mounted separately — but behind the same
+	// authentication, MFA and vault requirements.
+	mux.Handle("GET /api/terminals/socket", chain(
+		http.HandlerFunc(a.handleTerminalSocket), a.withAuth, a.withMFA))
 
 	// CSRF wraps everything: a state-changing request must carry a valid
 	// token whether or not it is authenticated, so an unauthenticated login
@@ -247,6 +278,33 @@ func (a *API) routeAuthenticated(w http.ResponseWriter, r *http.Request) {
 		a.handleMFAConfirm(w, r)
 	case r.Method == http.MethodDelete && path == "/api/mfa":
 		a.handleMFADisable(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/tree":
+		a.handleGetTree(w, r)
+	case r.Method == http.MethodPost && path == "/api/tree/folders":
+		a.handleCreateFolder(w, r)
+	case r.Method == http.MethodPatch && strings.HasPrefix(path, "/api/tree/folders/"):
+		a.handleUpdateFolder(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/tree/folders/"):
+		a.handleDeleteFolder(w, r)
+	case r.Method == http.MethodPost && path == "/api/tree/sessions":
+		a.handleCreateSavedSession(w, r)
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/resolved"):
+		a.handleResolveSession(w, r)
+	case r.Method == http.MethodPatch && strings.HasPrefix(path, "/api/tree/sessions/"):
+		a.handleUpdateSavedSession(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/tree/sessions/"):
+		a.handleDeleteSavedSession(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/terminals":
+		a.handleListTerminals(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/terminals/"):
+		a.handleCloseTerminal(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/known-hosts":
+		a.handleListKnownHosts(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/known-hosts/"):
+		a.handleForgetKnownHost(w, r)
 
 	case r.Method == http.MethodGet && path == "/api/credentials":
 		a.handleListCredentials(w, r)

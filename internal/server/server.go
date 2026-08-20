@@ -19,7 +19,10 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/auth"
 	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
+	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
+	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store"
+	"github.com/mrbuttshooter/securecrt/internal/terminal"
 	"github.com/mrbuttshooter/securecrt/internal/users"
 	"github.com/mrbuttshooter/securecrt/internal/vault"
 	"github.com/mrbuttshooter/securecrt/internal/web"
@@ -39,6 +42,11 @@ type Server struct {
 
 	api  *api.API
 	http *http.Server
+
+	// terminals holds every live SSH session. It outlives individual
+	// WebSocket connections, which is what lets a browser reconnect to a
+	// shell it left running.
+	terminals *terminal.Manager
 }
 
 // New builds a Server: it opens the database, applies migrations if
@@ -109,7 +117,7 @@ func (s *Server) buildAPI(ctx context.Context) error {
 		return err
 	}
 
-	sessions, err := auth.NewSessionStore(s.db, auth.SessionConfig{
+	authSessions, err := auth.NewSessionStore(s.db, auth.SessionConfig{
 		IdleTTL:       s.cfg.Auth.SessionIdleTTL,
 		AbsoluteTTL:   s.cfg.Auth.SessionAbsoluteTTL,
 		SecureCookies: s.cfg.Auth.SecureCookies,
@@ -150,16 +158,27 @@ func (s *Server) buildAPI(ctx context.Context) error {
 		return err
 	}
 
+	sessionTree := sessions.NewStore(s.db)
+	credentialStore := credentials.NewStore(s.db)
+	hostKeyStore := hostkeys.NewStore(s.db)
+
+	s.terminals = terminal.NewManager(s.log)
+	connector := terminal.NewConnector(s.terminals, sessionTree, credentialStore, hostKeyStore, s.log)
+
 	s.api, err = api.New(apiCfg, api.Deps{
 		DB:          s.db,
 		Users:       userStore,
 		Vaults:      vaultService,
-		Sessions:    sessions,
+		Sessions:    authSessions,
 		Throttle:    throttle,
 		OIDC:        oidcProvider,
-		Credentials: credentials.NewStore(s.db),
+		Credentials: credentialStore,
 		Audit:       audit.NewRecorder(s.db, s.log),
 		MasterKey:   s.master,
+		SessionTree: sessionTree,
+		Terminals:   s.terminals,
+		Connector:   connector,
+		HostKeys:    hostKeyStore,
 	}, s.log)
 	return err
 }

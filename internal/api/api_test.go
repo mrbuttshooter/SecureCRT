@@ -17,7 +17,10 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/auth"
 	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
+	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
+	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store/storetest"
+	"github.com/mrbuttshooter/securecrt/internal/terminal"
 	"github.com/mrbuttshooter/securecrt/internal/users"
 	"github.com/mrbuttshooter/securecrt/internal/vault"
 )
@@ -31,12 +34,15 @@ func TestMain(m *testing.M) {
 // harness is a running API with a client that keeps cookies, so tests drive
 // the same flow a browser would rather than constructing sessions by hand.
 type harness struct {
-	t      *testing.T
-	api    *API
-	server *httptest.Server
-	users  *users.Store
-	vaults *users.VaultService
-	cache  *vault.Cache
+	t         *testing.T
+	api       *API
+	server    *httptest.Server
+	users     *users.Store
+	vaults    *users.VaultService
+	cache     *vault.Cache
+	tree      *sessions.Store
+	terminals *terminal.Manager
+	hostKeys  *hostkeys.Store
 
 	cookies map[string]string
 	csrf    string
@@ -79,7 +85,7 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 		t.Fatal(err)
 	}
 
-	sessions, err := auth.NewSessionStore(db, auth.SessionConfig{
+	authSessions, err := auth.NewSessionStore(db, auth.SessionConfig{
 		IdleTTL: cfg.Auth.SessionIdleTTL, AbsoluteTTL: cfg.Auth.SessionAbsoluteTTL,
 	})
 	if err != nil {
@@ -100,12 +106,26 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 		t.Fatal(err)
 	}
 
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	sessionTree := sessions.NewStore(db)
+	credStore := credentials.NewStore(db)
+	hostKeyStore := hostkeys.NewStore(db)
+
+	terminals := terminal.NewManager(quiet)
+	t.Cleanup(terminals.Close)
+	connector := terminal.NewConnector(terminals, sessionTree, credStore, hostKeyStore, quiet)
+
 	a, err := New(apiCfg, Deps{
-		DB: db, Users: userStore, Vaults: vaultSvc, Sessions: sessions,
-		Throttle: throttle, Credentials: credentials.NewStore(db),
-		Audit:     audit.NewRecorder(db, slog.New(slog.NewTextHandler(io.Discard, nil))),
-		MasterKey: master,
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		DB: db, Users: userStore, Vaults: vaultSvc, Sessions: authSessions,
+		Throttle: throttle, Credentials: credStore,
+		Audit:       audit.NewRecorder(db, quiet),
+		MasterKey:   master,
+		SessionTree: sessionTree,
+		Terminals:   terminals,
+		Connector:   connector,
+		HostKeys:    hostKeyStore,
+	}, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +135,8 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 
 	h := &harness{
 		t: t, api: a, server: srv, users: userStore, vaults: vaultSvc,
-		cache: cache, cookies: map[string]string{},
+		cache: cache, tree: sessionTree, terminals: terminals, hostKeys: hostKeyStore,
+		cookies: map[string]string{},
 	}
 
 	// Every client begins by fetching the sign-in configuration, which is

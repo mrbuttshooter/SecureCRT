@@ -150,6 +150,7 @@ const (
 
 	// ErrCodeNoCredential means the saved connection names no usable
 	// credential.
+	// #nosec G101 -- an error code sent to the browser, not a credential.
 	ErrCodeNoCredential = "no_credential"
 
 	// ErrCodeNotFound means the saved connection or terminal is unknown.
