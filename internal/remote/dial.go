@@ -72,6 +72,11 @@ const (
 	// administrator rather than to a bug report.
 	CodeProtocolDisabled = "protocol_disabled"
 
+	// CodeConflict is something already holding what was asked for — a serial
+	// line another terminal has open. Retrying later works; retrying now
+	// does not.
+	CodeConflict = "conflict"
+
 	CodeInternal = "internal_error"
 )
 

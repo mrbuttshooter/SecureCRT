@@ -127,6 +127,18 @@ type Settings struct {
 	// which is how somebody turns off the default sequence on one connection
 	// inside a folder that has one.
 	LogonSteps *[]LogonStep `json:"logon_steps,omitempty"`
+
+	// Serial line settings, for connections whose protocol is serial.
+	//
+	// Inherited like everything else, because a bench with eight identical
+	// console cables wants 9600 8N1 set once on the folder. Unset means the
+	// console defaults, which is what essentially all network equipment ships
+	// with.
+	SerialBaud     *int    `json:"serial_baud,omitempty"`
+	SerialDataBits *int    `json:"serial_data_bits,omitempty"`
+	SerialStopBits *int    `json:"serial_stop_bits,omitempty"`
+	SerialParity   *string `json:"serial_parity,omitempty"`
+	SerialFlow     *string `json:"serial_flow,omitempty"`
 }
 
 // EffectiveLogonSteps is the sequence to run, or the default.
@@ -190,6 +202,21 @@ func (s Settings) merge(parent Settings) Settings {
 	}
 	if out.LogonSteps == nil {
 		out.LogonSteps = parent.LogonSteps
+	}
+	if out.SerialBaud == nil {
+		out.SerialBaud = parent.SerialBaud
+	}
+	if out.SerialDataBits == nil {
+		out.SerialDataBits = parent.SerialDataBits
+	}
+	if out.SerialStopBits == nil {
+		out.SerialStopBits = parent.SerialStopBits
+	}
+	if out.SerialParity == nil {
+		out.SerialParity = parent.SerialParity
+	}
+	if out.SerialFlow == nil {
+		out.SerialFlow = parent.SerialFlow
 	}
 
 	// AgentForwardCredentials is absent from this list deliberately, and the

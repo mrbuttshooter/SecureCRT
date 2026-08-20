@@ -196,6 +196,28 @@ policy:
   # retired, and find out immediately who had not noticed.
   allow_telnet: true
 
+  # Serial ports on this machine. Off by default, and it should stay off
+  # almost everywhere: it only does anything where this server is physically
+  # cabled to the equipment, which for a central install is essentially never.
+  # A lab box on somebody's bench is what it is for. For a rack reached over
+  # the network, use a console server — those speak SSH or telnet.
+  allow_serial: false
+
+serial:
+  # Which ports may be opened. The path comes from a saved connection, which
+  # is to say from a user, so this list is what stands between that and an
+  # arbitrary-file-read on a server holding everyone's encrypted credentials.
+  # Refusing anything that is not a character device is not enough on its own:
+  # /dev/mem is a character device.
+  #
+  # Empty opens nothing. Name the ports that exist and nothing else:
+  #   allowed_devices:
+  #     - "/dev/ttyUSB*"
+  #     - "/dev/ttyS[0-3]"
+  #
+  # Matched after symbolic links are resolved, so a link cannot reach past it.
+  allowed_devices: []
+
 tunnels:
   # Where forwarded ports listen. Loopback makes the feature useless from
   # anywhere but this machine, which is the safe default; widening it is a

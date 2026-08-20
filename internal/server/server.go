@@ -184,7 +184,11 @@ func (s *Server) buildAPI(ctx context.Context) error {
 
 	s.terminals = terminal.NewManager(s.log)
 	connector := terminal.NewConnector(s.terminals, dialer,
-		terminal.Policy{AllowTelnet: s.cfg.Policy.AllowTelnet}, s.log)
+		terminal.Policy{
+			AllowTelnet:   s.cfg.Policy.AllowTelnet,
+			AllowSerial:   s.cfg.Policy.AllowSerial,
+			SerialDevices: s.cfg.Serial.AllowedDevices,
+		}, s.log)
 
 	s.fileSessions = files.NewManager(dialer, s.log)
 	s.transfers = files.NewTransfers(s.fileSessions, s.log)

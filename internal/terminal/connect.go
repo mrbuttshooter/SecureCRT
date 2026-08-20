@@ -2,12 +2,14 @@ package terminal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
 	"strings"
 
+	"github.com/mrbuttshooter/securecrt/internal/proto/serialx"
 	"github.com/mrbuttshooter/securecrt/internal/proto/sshx"
 	"github.com/mrbuttshooter/securecrt/internal/proto/telnetx"
 
@@ -42,6 +44,13 @@ var ChangedKeyInfo = remote.ChangedKeyInfo
 type Policy struct {
 	// AllowTelnet permits plaintext telnet connections.
 	AllowTelnet bool
+
+	// AllowSerial permits opening serial ports on this machine.
+	AllowSerial bool
+
+	// SerialDevices is the glob list naming the ports that exist. Empty
+	// opens nothing, whatever AllowSerial says.
+	SerialDevices []string
 }
 
 // Connector opens terminals for saved connections.
@@ -50,6 +59,11 @@ type Connector struct {
 	dialer  *remote.Dialer
 	policy  Policy
 	log     *slog.Logger
+
+	// serialPorts tracks which line each terminal holds, so the second
+	// person to ask for one is told rather than handed a wire somebody else
+	// is already typing into.
+	serialPorts *serialx.Registry
 }
 
 // NewConnector builds a Connector.
@@ -57,7 +71,10 @@ func NewConnector(manager *Manager, dialer *remote.Dialer, policy Policy, log *s
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Connector{manager: manager, dialer: dialer, policy: policy, log: log}
+	return &Connector{
+		manager: manager, dialer: dialer, policy: policy, log: log,
+		serialPorts: serialx.NewRegistry(),
+	}
 }
 
 // ConnectParams describes a terminal to open.
@@ -102,6 +119,8 @@ func (c *Connector) Connect(ctx context.Context, p ConnectParams) (*Terminal, er
 		return c.connectSSH(ctx, p)
 	case sessions.ProtocolTelnet:
 		return c.connectTelnet(ctx, p, resolved)
+	case sessions.ProtocolSerial:
+		return c.connectSerial(ctx, p, resolved)
 	default:
 		return nil, &ConnectError{
 			Code: remote.CodeInternal,
@@ -268,6 +287,145 @@ func (c *Connector) connectTelnet(
 	}
 
 	return term, nil
+}
+
+// connectSerial opens a serial line for one terminal.
+//
+// The device path is the connection's hostname field, which is the one place
+// in this system where a connection addresses a device rather than a host.
+func (c *Connector) connectSerial(
+	ctx context.Context, p ConnectParams, resolved sessions.Resolved,
+) (*Terminal, error) {
+	if !c.policy.AllowSerial {
+		return nil, &ConnectError{
+			Code: remote.CodeProtocolDisabled,
+			Message: "Serial ports are disabled on this server. They only work " +
+				"where it is physically cabled to the device; an administrator " +
+				"can allow them with policy.allow_serial.",
+		}
+	}
+
+	cfg := serialx.Config{
+		Device:   resolved.Hostname,
+		Allowed:  c.policy.SerialDevices,
+		Baud:     valueOr(resolved.Settings.SerialBaud, 0),
+		DataBits: valueOr(resolved.Settings.SerialDataBits, 0),
+		StopBits: valueOr(resolved.Settings.SerialStopBits, 0),
+		Parity:   serialx.Parity(valueOr(resolved.Settings.SerialParity, "")),
+		Flow:     serialx.FlowControl(valueOr(resolved.Settings.SerialFlow, "")),
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, &ConnectError{
+			Code: remote.CodeInternal, Message: err.Error(), Err: err,
+		}
+	}
+
+	// Claimed before opening. Two terminals on one wire interleave two
+	// people's keystrokes into a device that has no idea anything is wrong.
+	release, err := c.serialPorts.Claim(resolved.Hostname, p.UserID, resolved.Name)
+	if err != nil {
+		var inUse *serialx.InUseError
+		if errors.As(err, &inUse) {
+			message := "That serial port is in use by somebody else."
+			if inUse.SameUser {
+				message = fmt.Sprintf(
+					"You already have %s open in another tab (%s). A serial line "+
+						"carries one session at a time.", resolved.Hostname, inUse.Label)
+			}
+			return nil, &ConnectError{Code: remote.CodeConflict, Message: message, Err: err}
+		}
+		return nil, &ConnectError{Code: remote.CodeInternal, Message: "The port could not be claimed.", Err: err}
+	}
+
+	port, err := serialx.Open(cfg)
+	if err != nil {
+		release()
+		return nil, serialError(err, resolved.Hostname)
+	}
+
+	logon, err := c.dialer.LogonFor(ctx, remote.Params{
+		UserID: p.UserID, SessionID: resolved.ID, VaultKey: p.VaultKey,
+	}, resolved)
+	if err != nil {
+		_ = port.Close()
+		release()
+		return nil, err
+	}
+
+	steps := resolved.Settings.EffectiveLogonSteps(logon.Password != "")
+	shell := WithLogon(port, steps, logon.Username, logon.Password)
+
+	term, err := c.manager.Open(shell, release, OpenParams{
+		UserID:     p.UserID,
+		SessionID:  resolved.ID,
+		Label:      resolved.Name,
+		Username:   logon.Username,
+		Cols:       p.Cols,
+		Rows:       p.Rows,
+		LogonSteps: len(steps),
+		Transport: Transport{
+			Protocol: sessions.ProtocolSerial,
+			Device:   port.Device(),
+			Detail:   port.Summary(),
+		},
+	})
+	if err != nil {
+		_ = port.Close()
+		release()
+		return nil, &ConnectError{
+			Code: remote.CodeInternal, Message: "The serial session could not be started.", Err: err,
+		}
+	}
+
+	if err := c.dialer.MarkUsed(ctx, resolved.ID); err != nil {
+		c.log.Warn("recording session use", "error", err)
+	}
+
+	return term, nil
+}
+
+// serialError turns a refusal into something a person can act on.
+//
+// The distinction that matters is between "this server will not" and "this
+// device will not": one sends somebody to their administrator, the other to
+// the cable.
+func serialError(err error, device string) error {
+	switch {
+	case errors.Is(err, serialx.ErrNotAllowed):
+		return &ConnectError{
+			Code: remote.CodeProtocolDisabled,
+			Message: fmt.Sprintf(
+				"%s is not one of the serial ports this server may open. An "+
+					"administrator lists them in serial.allowed_devices.", device),
+			Err: err,
+		}
+	case errors.Is(err, serialx.ErrNotADevice):
+		return &ConnectError{
+			Code:    remote.CodeInternal,
+			Message: fmt.Sprintf("%s is not a serial device.", device),
+			Err:     err,
+		}
+	case errors.Is(err, serialx.ErrUnsupported):
+		return &ConnectError{
+			Code:    remote.CodeProtocolDisabled,
+			Message: "This build of bkd cannot open serial ports.",
+			Err:     err,
+		}
+	default:
+		return &ConnectError{
+			Code:    remote.CodeUnreachable,
+			Message: fmt.Sprintf("%s could not be opened.", device),
+			Err:     err,
+		}
+	}
+}
+
+// valueOr reads an optional setting.
+func valueOr[T any](p *T, fallback T) T {
+	if p == nil {
+		return fallback
+	}
+	return *p
 }
 
 // viaDetail summarises the route for the terminal header.

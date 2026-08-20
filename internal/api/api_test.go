@@ -125,7 +125,11 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 	terminals := terminal.NewManager(quiet)
 	t.Cleanup(terminals.Close)
 	connector := terminal.NewConnector(terminals, dialer,
-		terminal.Policy{AllowTelnet: cfg.Policy.AllowTelnet}, quiet)
+		terminal.Policy{
+			AllowTelnet:   cfg.Policy.AllowTelnet,
+			AllowSerial:   cfg.Policy.AllowSerial,
+			SerialDevices: cfg.Serial.AllowedDevices,
+		}, quiet)
 
 	fileSessions := files.NewManager(dialer, quiet)
 	transfers := files.NewTransfers(fileSessions, quiet)

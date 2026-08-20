@@ -52,6 +52,7 @@ type Config struct {
 	Log      LogConfig      `yaml:"log"`
 	Policy   PolicyConfig   `yaml:"policy"`
 	Tunnels  TunnelsConfig  `yaml:"tunnels"`
+	Serial   SerialConfig   `yaml:"serial"`
 }
 
 // ServerConfig controls the HTTP listener.
@@ -246,6 +247,34 @@ type PolicyConfig struct {
 	// finished retiring its telnet estate turns this off and finds out
 	// immediately who had not noticed.
 	AllowTelnet bool `yaml:"allow_telnet"`
+
+	// AllowSerial permits opening serial ports on this machine.
+	//
+	// Off by default, and it should stay off almost everywhere. It only does
+	// anything where this server is physically cabled to the equipment, which
+	// for a central install serving a company is essentially never — a lab
+	// box on somebody's bench is the case it exists for. The remote case is
+	// what console servers are for, and those speak SSH or telnet.
+	//
+	// The device path comes from a saved connection, which is to say from a
+	// user, so this switch is only half the guard: serial.allowed_devices is
+	// the other half and has no default.
+	AllowSerial bool `yaml:"allow_serial"`
+}
+
+// SerialConfig bounds what serial ports may be opened.
+type SerialConfig struct {
+	// AllowedDevices is a list of globs naming the ports that exist.
+	//
+	// Empty opens nothing, which is the safe default rather than an
+	// oversight. Without this list, "open this path and stream it to my
+	// browser" is an arbitrary-file-read primitive on a server holding every
+	// engineer's encrypted credentials — and refusing anything that is not a
+	// character device does not save it, because /dev/mem is one.
+	//
+	// Matched against the path after symbolic links are resolved, so a link
+	// cannot be used to reach something these globs do not name.
+	AllowedDevices []string `yaml:"allowed_devices"`
 }
 
 // TunnelsConfig holds the operational settings for port forwarding. The
@@ -344,7 +373,9 @@ func Default() Config {
 			AllowTCPTunnels:      false,
 			AllowRemoteForwards:  false,
 			AllowTelnet:          true,
+			AllowSerial:          false,
 		},
+		Serial: SerialConfig{AllowedDevices: nil},
 		Tunnels: TunnelsConfig{
 			Bind:        "127.0.0.1",
 			PortRange:   "34000-34999",
@@ -427,6 +458,7 @@ func applyEnv(cfg *Config) {
 	bl("ALLOW_PLAINTEXT_EXPORT", &cfg.Policy.AllowPlaintextExport)
 	bl("ALLOW_PASSWORD_AUTH", &cfg.Policy.AllowPasswordAuth)
 	bl("ALLOW_TELNET", &cfg.Policy.AllowTelnet)
+	bl("ALLOW_SERIAL", &cfg.Policy.AllowSerial)
 	bl("REQUIRE_HOST_KEY_VERIFY", &cfg.Policy.RequireHostKeyVerify)
 	bl("RECORD_ALL_SESSIONS", &cfg.Policy.RecordAllSessions)
 }
