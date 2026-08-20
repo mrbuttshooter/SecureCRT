@@ -103,6 +103,13 @@ const (
 	// recording every notice would bury the two that changed something.
 	ActionTriggerFired Action = "trigger.fired"
 
+	// ActionSnippetSent records a stored command being typed at one or more
+	// devices. The snippet's name and how many received it, never the
+	// rendered body: a parameter value is whatever somebody typed into a
+	// form, and an audit log forwarded to a SIEM is the wrong place to find
+	// out what that was.
+	ActionSnippetSent Action = "snippet.sent"
+
 	// Files. Reads and writes against a managed host are recorded because
 	// "who took a copy of the running configuration, and when" is the first
 	// question asked after an incident.

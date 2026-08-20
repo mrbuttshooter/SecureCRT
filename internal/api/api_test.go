@@ -23,6 +23,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/proto/tunnel"
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
+	"github.com/mrbuttshooter/securecrt/internal/snippets"
 	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/store/storetest"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
@@ -157,6 +158,7 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 		Connector:    connector,
 		HostKeys:     hostKeyStore,
 		Tunnels:      tunnels,
+		Snippets:     snippets.NewStore(db),
 	}, quiet)
 	if err != nil {
 		t.Fatal(err)

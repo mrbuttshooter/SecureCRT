@@ -16,6 +16,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/portability"
 	"github.com/mrbuttshooter/securecrt/internal/proto/tunnel"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
+	"github.com/mrbuttshooter/securecrt/internal/snippets"
 	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
 	"github.com/mrbuttshooter/securecrt/internal/users"
@@ -100,7 +101,8 @@ type API struct {
 	transfers    *files.Transfers
 
 	// Tunnels: port forwarding and the device web proxy.
-	tunnels *tunnel.Manager
+	tunnels  *tunnel.Manager
+	snippets *snippets.Store
 
 	// Import and export, plus the previews waiting to be committed.
 	portability *portability.Service
@@ -132,6 +134,7 @@ type Deps struct {
 	Transfers    *files.Transfers
 	Portability  *portability.Service
 	Tunnels      *tunnel.Manager
+	Snippets     *snippets.Store
 }
 
 // New builds an API.
@@ -164,7 +167,8 @@ func New(cfg Config, deps Deps, log *slog.Logger) (*API, error) {
 		fileSessions: deps.FileSessions,
 		transfers:    deps.Transfers,
 
-		tunnels: deps.Tunnels,
+		tunnels:  deps.Tunnels,
+		snippets: deps.Snippets,
 
 		portability: deps.Portability,
 		staging:     newStaging(),
@@ -302,6 +306,9 @@ func (a *API) Routes() http.Handler {
 		"GET /api/tunnels/config",
 		"GET /api/consoles/profiles", "POST /api/consoles/plan",
 		"POST /api/consoles/apply",
+		"GET /api/snippets", "POST /api/snippets",
+		"PATCH /api/snippets/{id}", "DELETE /api/snippets/{id}",
+		"POST /api/snippets/send",
 
 		"GET /api/portability/config", "POST /api/portability/import",
 		"DELETE /api/portability/staged/{id}", "POST /api/portability/export",
@@ -451,6 +458,17 @@ func (a *API) routeAuthenticated(w http.ResponseWriter, r *http.Request) {
 		a.handleListTransfers(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/files/transfers/"):
 		a.handleCancelTransfer(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/snippets":
+		a.handleListSnippets(w, r)
+	case r.Method == http.MethodPost && path == "/api/snippets":
+		a.handleCreateSnippet(w, r)
+	case r.Method == http.MethodPost && path == "/api/snippets/send":
+		a.handleSendSnippet(w, r)
+	case r.Method == http.MethodPatch && strings.HasPrefix(path, "/api/snippets/"):
+		a.handleUpdateSnippet(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/snippets/"):
+		a.handleDeleteSnippet(w, r)
 
 	case r.Method == http.MethodGet && path == "/api/consoles/profiles":
 		a.handleConsoleProfiles(w, r)
