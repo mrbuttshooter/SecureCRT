@@ -92,6 +92,12 @@ const (
 	// creations that nobody would think to correlate.
 	ActionConsoleGenerated Action = "console.generated"
 
+	// ActionSessionRecorded records a transcript being opened. Notice-level:
+	// "was this session written down, and where" is a question asked long
+	// after the fact, usually by somebody who needs the answer to be findable
+	// rather than merely true.
+	ActionSessionRecorded Action = "session.recorded"
+
 	// Files. Reads and writes against a managed host are recorded because
 	// "who took a copy of the running configuration, and when" is the first
 	// question asked after an incident.
@@ -172,7 +178,8 @@ var minimumSeverity = map[Action]Severity{
 
 	// Forwarded keys can be used by the far host for as long as the session
 	// lasts. That is the point of agent forwarding and also its whole risk.
-	ActionAgentForwarded: SeverityNotice,
+	ActionAgentForwarded:  SeverityNotice,
+	ActionSessionRecorded: SeverityNotice,
 }
 
 var severityRank = map[Severity]int{

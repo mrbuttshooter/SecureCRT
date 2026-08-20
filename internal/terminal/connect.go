@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mrbuttshooter/securecrt/internal/proto/serialx"
 	"github.com/mrbuttshooter/securecrt/internal/proto/sshx"
@@ -51,6 +52,16 @@ type Policy struct {
 	// SerialDevices is the glob list naming the ports that exist. Empty
 	// opens nothing, whatever AllowSerial says.
 	SerialDevices []string
+
+	// SessionLogDir is where transcripts are written. Empty disables
+	// recording entirely, whatever any connection asks for.
+	SessionLogDir string
+
+	// RecordAllSessions makes every session recorded regardless of what the
+	// connection says. The user is told, on their own terminal, because
+	// somebody whose work is being written to disk should learn it from the
+	// thing doing it rather than from a settings page they never open.
+	RecordAllSessions bool
 }
 
 // Connector opens terminals for saved connections.
@@ -165,7 +176,18 @@ func (c *Connector) connectSSH(ctx context.Context, p ConnectParams) (*Terminal,
 
 	target := conn.Client().Target()
 
-	term, err := c.manager.Open(shell, conn.Release, OpenParams{
+	transcript, forced, err := c.recordingFor(conn.Resolved)
+	if err != nil {
+		_ = shell.Close()
+		conn.Release()
+		return nil, &ConnectError{
+			Code:    remote.CodeInternal,
+			Message: "This session should be recorded and the transcript could not be opened.",
+			Err:     err,
+		}
+	}
+
+	term, err := c.manager.Open(WithTranscript(shell, transcript), conn.Release, OpenParams{
 		UserID:    p.UserID,
 		SessionID: conn.Resolved.ID,
 		Label:     conn.Resolved.Name,
@@ -175,6 +197,9 @@ func (c *Connector) connectSSH(ctx context.Context, p ConnectParams) (*Terminal,
 		AgentKeys: conn.AgentKeys,
 
 		AgentRefused: shell.AgentRefused() != nil,
+		Transcript:   transcript,
+		Recorded:     transcript != nil,
+		RecordForced: forced,
 		Transport: Transport{
 			Protocol: sessions.ProtocolSSH,
 			Host:     target.Hostname,
@@ -255,17 +280,34 @@ func (c *Connector) connectTelnet(
 		return nil, err
 	}
 
+	transcript, forced, err := c.recordingFor(resolved)
+	if err != nil {
+		_ = conn.Close()
+		return nil, &ConnectError{
+			Code:    remote.CodeInternal,
+			Message: "This session should be recorded and the transcript could not be opened.",
+			Err:     err,
+		}
+	}
+
+	// The transcript wraps the logon wrapper rather than the other way round,
+	// so what is recorded is what reached the screen — including the login
+	// exchange, which is exactly the part somebody reviewing a session wants
+	// to see happened.
 	steps := resolved.Settings.EffectiveLogonSteps(logon.Password != "")
-	shell := WithLogon(conn, steps, logon.Username, logon.Password)
+	shell := WithTranscript(WithLogon(conn, steps, logon.Username, logon.Password), transcript)
 
 	term, err := c.manager.Open(shell, nil, OpenParams{
-		UserID:     p.UserID,
-		SessionID:  resolved.ID,
-		Label:      resolved.Name,
-		Username:   resolved.EffectiveUsername,
-		Cols:       cols,
-		Rows:       rows,
-		LogonSteps: len(steps),
+		UserID:       p.UserID,
+		SessionID:    resolved.ID,
+		Label:        resolved.Name,
+		Username:     resolved.EffectiveUsername,
+		Cols:         cols,
+		Rows:         rows,
+		LogonSteps:   len(steps),
+		Transcript:   transcript,
+		Recorded:     transcript != nil,
+		RecordForced: forced,
 		Transport: Transport{
 			Protocol: sessions.ProtocolTelnet,
 			Host:     resolved.Hostname,
@@ -352,17 +394,31 @@ func (c *Connector) connectSerial(
 		return nil, err
 	}
 
+	transcript, forced, err := c.recordingFor(resolved)
+	if err != nil {
+		_ = port.Close()
+		release()
+		return nil, &ConnectError{
+			Code:    remote.CodeInternal,
+			Message: "This session should be recorded and the transcript could not be opened.",
+			Err:     err,
+		}
+	}
+
 	steps := resolved.Settings.EffectiveLogonSteps(logon.Password != "")
-	shell := WithLogon(port, steps, logon.Username, logon.Password)
+	shell := WithTranscript(WithLogon(port, steps, logon.Username, logon.Password), transcript)
 
 	term, err := c.manager.Open(shell, release, OpenParams{
-		UserID:     p.UserID,
-		SessionID:  resolved.ID,
-		Label:      resolved.Name,
-		Username:   logon.Username,
-		Cols:       p.Cols,
-		Rows:       p.Rows,
-		LogonSteps: len(steps),
+		UserID:       p.UserID,
+		SessionID:    resolved.ID,
+		Label:        resolved.Name,
+		Username:     logon.Username,
+		Cols:         p.Cols,
+		Rows:         p.Rows,
+		LogonSteps:   len(steps),
+		Transcript:   transcript,
+		Recorded:     transcript != nil,
+		RecordForced: forced,
 		Transport: Transport{
 			Protocol: sessions.ProtocolSerial,
 			Device:   port.Device(),
@@ -426,6 +482,39 @@ func valueOr[T any](p *T, fallback T) T {
 		return fallback
 	}
 	return *p
+}
+
+// recordingFor opens a transcript when this connection should have one.
+//
+// Returns nil when it should not, which is the common case, so nothing is
+// wrapped and nothing is written. A failure to open one is reported rather
+// than swallowed: an operator who turned on record_all_sessions has to know
+// it is not happening, and a user who ticked the box has to know their
+// session is not being kept.
+func (c *Connector) recordingFor(resolved sessions.Resolved) (*Transcript, bool, error) {
+	if c.policy.SessionLogDir == "" {
+		return nil, false, nil
+	}
+
+	forced := c.policy.RecordAllSessions
+	wanted := forced
+	if resolved.Settings.LogSession != nil && *resolved.Settings.LogSession {
+		wanted = true
+	}
+	if !wanted {
+		return nil, false, nil
+	}
+
+	transcript, err := NewTranscript(TranscriptConfig{
+		Dir:    c.policy.SessionLogDir,
+		UserID: resolved.OwnerID,
+		Label:  resolved.Name,
+		Forced: forced,
+	}, time.Now())
+	if err != nil {
+		return nil, forced, err
+	}
+	return transcript, forced, nil
 }
 
 // viaDetail summarises the route for the terminal header.

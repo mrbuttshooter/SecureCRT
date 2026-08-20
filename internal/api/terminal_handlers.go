@@ -209,6 +209,35 @@ func (a *API) openTerminal(
 		},
 	})
 
+	if term.Recorded {
+		// Said on the terminal itself, not only recorded. Somebody whose work
+		// is being written to a file on a shared server should learn that
+		// from the thing doing it — particularly when it was not their
+		// decision.
+		message := "This session is being recorded to a transcript on the server."
+		if term.RecordForced {
+			message = "This server records every session. Output from this one " +
+				"is being written to a transcript; what you type is not."
+		}
+		writeControl(ctx, conn, a, terminal.Control{
+			Type: terminal.ControlWarning, Code: "session_recorded", Message: message,
+		})
+
+		a.audit.Record(ctx, audit.Event{
+			ActorID: u.ID, ActorEmail: u.Email, IPAddress: a.clientIP(r),
+			Action: audit.ActionSessionRecorded, TargetType: "session",
+			TargetID: savedSessionID, TargetLabel: term.Label,
+			Detail: map[string]any{
+				"terminal_id": term.ID,
+				"forced":      term.RecordForced,
+				// The path, so an operator can find the file. Not its
+				// contents, obviously, and not the transcript's own name in
+				// any field a redactor would strip.
+				"transcript": term.TranscriptPath(),
+			},
+		})
+	}
+
 	if len(term.AgentKeys) > 0 {
 		// A separate record from the connection itself, because it answers a
 		// different question and has to be findable on its own: not "did

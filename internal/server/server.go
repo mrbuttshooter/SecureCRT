@@ -188,6 +188,9 @@ func (s *Server) buildAPI(ctx context.Context) error {
 			AllowTelnet:   s.cfg.Policy.AllowTelnet,
 			AllowSerial:   s.cfg.Policy.AllowSerial,
 			SerialDevices: s.cfg.Serial.AllowedDevices,
+
+			SessionLogDir:     s.cfg.Paths.SessionLogDir,
+			RecordAllSessions: s.cfg.Policy.RecordAllSessions,
 		}, s.log)
 
 	s.fileSessions = files.NewManager(dialer, s.log)

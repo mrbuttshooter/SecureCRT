@@ -129,6 +129,9 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 			AllowTelnet:   cfg.Policy.AllowTelnet,
 			AllowSerial:   cfg.Policy.AllowSerial,
 			SerialDevices: cfg.Serial.AllowedDevices,
+
+			SessionLogDir:     cfg.Paths.SessionLogDir,
+			RecordAllSessions: cfg.Policy.RecordAllSessions,
 		}, quiet)
 
 	fileSessions := files.NewManager(dialer, quiet)

@@ -69,6 +69,16 @@ type Terminal struct {
 	// the audit record. The count only — one of them holds a password.
 	LogonSteps int
 
+	// Recorded reports that this session's output is being written to disk,
+	// and RecordForced that it was the operator's decision rather than the
+	// user's. Both reach the browser: somebody whose work is being recorded
+	// should learn it from the terminal rather than from a settings page they
+	// never open.
+	Recorded     bool
+	RecordForced bool
+
+	transcript *Transcript
+
 	shell Shell
 	log   *slog.Logger
 
@@ -246,6 +256,22 @@ type OpenParams struct {
 	// The count and never the content: one of those steps carries a
 	// password, and an audit log is exactly the wrong place for it to end up.
 	LogonSteps int
+
+	// Recorded reports that this session's output is being written to disk,
+	// Transcript is the open recording, when there is one.
+	Transcript *Transcript
+
+	// Recorded and RecordForced describe that recording to the interface.
+	Recorded     bool
+	RecordForced bool
+}
+
+// TranscriptPath is where this session is being written, or empty.
+func (t *Terminal) TranscriptPath() string {
+	if t.transcript == nil {
+		return ""
+	}
+	return t.transcript.Path()
 }
 
 // Open registers a shell somebody else opened and starts pumping it.
@@ -285,6 +311,9 @@ func (m *Manager) Open(shell Shell, release func(), p OpenParams) (*Terminal, er
 		AgentKeys:    p.AgentKeys,
 		AgentRefused: p.AgentRefused,
 		LogonSteps:   p.LogonSteps,
+		Recorded:     p.Recorded,
+		RecordForced: p.RecordForced,
+		transcript:   p.Transcript,
 
 		shell:   shell,
 		release: release,
@@ -572,6 +601,11 @@ type Info struct {
 	CreatedAt time.Time `json:"created_at"`
 	Attached  bool      `json:"attached"`
 	Closed    bool      `json:"closed"`
+
+	// Recorded says this session's output is being written to disk, and
+	// Forced that the operator required it rather than the user choosing it.
+	Recorded     bool `json:"recorded"`
+	RecordForced bool `json:"record_forced,omitempty"`
 }
 
 // ListForUser returns a user's live terminals.
@@ -589,18 +623,20 @@ func (m *Manager) ListForUser(userID string) []Info {
 		}
 		t.mu.Lock()
 		info := Info{
-			ID:        t.ID,
-			SessionID: t.SessionID,
-			Label:     t.Label,
-			Protocol:  string(t.Transport.Protocol),
-			Host:      t.Transport.Host,
-			Port:      t.Transport.Port,
-			Device:    t.Transport.Device,
-			Encrypted: t.Transport.Encrypted(),
-			Username:  t.Username,
-			CreatedAt: t.CreatedAt,
-			Attached:  t.attached != nil,
-			Closed:    t.closed,
+			ID:           t.ID,
+			SessionID:    t.SessionID,
+			Label:        t.Label,
+			Protocol:     string(t.Transport.Protocol),
+			Host:         t.Transport.Host,
+			Port:         t.Transport.Port,
+			Device:       t.Transport.Device,
+			Encrypted:    t.Transport.Encrypted(),
+			Recorded:     t.Recorded,
+			RecordForced: t.RecordForced,
+			Username:     t.Username,
+			CreatedAt:    t.CreatedAt,
+			Attached:     t.attached != nil,
+			Closed:       t.closed,
 		}
 		t.mu.Unlock()
 		out = append(out, info)
