@@ -20,6 +20,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/files"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
 	"github.com/mrbuttshooter/securecrt/internal/portability"
+	"github.com/mrbuttshooter/securecrt/internal/proto/tunnel"
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store"
@@ -127,6 +128,18 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 
 	fileSessions := files.NewManager(dialer, quiet)
 	transfers := files.NewTransfers(fileSessions, quiet)
+
+	portLow, portHigh, _ := config.ParsePortRange(cfg.Tunnels.PortRange)
+	tunnels := tunnel.NewManager(tunnel.Config{
+		AllowListeners: cfg.Policy.AllowTCPTunnels,
+		Bind:           cfg.Tunnels.Bind,
+		PortLow:        portLow,
+		PortHigh:       portHigh,
+		Domain:         cfg.Tunnels.Domain,
+		MaxPerUser:     cfg.Tunnels.MaxPerUser,
+		IdleTimeout:    cfg.Tunnels.IdleTimeout,
+	}, dialer, quiet)
+	t.Cleanup(tunnels.Shutdown)
 	t.Cleanup(func() {
 		transfers.Shutdown()
 		fileSessions.Shutdown()
@@ -144,6 +157,7 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 		Portability:  portability.NewService(sessionTree, credStore, hostKeyStore, quiet),
 		Connector:    connector,
 		HostKeys:     hostKeyStore,
+		Tunnels:      tunnels,
 	}, quiet)
 	if err != nil {
 		t.Fatal(err)

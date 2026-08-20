@@ -78,6 +78,14 @@ const (
 	ActionTerminalConnectFailed Action = "terminal.connect.failed"
 	ActionTerminalClosed        Action = "terminal.closed"
 
+	// Tunnels. docs/SECURITY.md has claimed since Phase 0 that tunnel
+	// creation is audited; from here that is true.
+	ActionTunnelOpened   Action = "tunnel.opened"
+	ActionTunnelClosed   Action = "tunnel.closed"
+	ActionTunnelRefused  Action = "tunnel.refused"
+	ActionTunnelListener Action = "tunnel.listener.opened"
+	ActionAgentForwarded Action = "agent.forwarded"
+
 	// Files. Reads and writes against a managed host are recorded because
 	// "who took a copy of the running configuration, and when" is the first
 	// question asked after an incident.
@@ -144,6 +152,15 @@ var minimumSeverity = map[Action]Severity{
 	// is routine enough to file as "info".
 	ActionFileDownloaded:  SeverityNotice,
 	ActionFileTreeDeleted: SeverityNotice,
+
+	// A port opened on this server is reachable by whoever can reach the
+	// host, account or no account — worth finding in a log without having
+	// known to look for it.
+	ActionTunnelListener: SeverityNotice,
+
+	// Forwarded keys can be used by the far host for as long as the session
+	// lasts. That is the point of agent forwarding and also its whole risk.
+	ActionAgentForwarded: SeverityNotice,
 }
 
 var severityRank = map[Severity]int{

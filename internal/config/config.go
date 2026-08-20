@@ -10,6 +10,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -50,6 +51,7 @@ type Config struct {
 	Paths    PathsConfig    `yaml:"paths"`
 	Log      LogConfig      `yaml:"log"`
 	Policy   PolicyConfig   `yaml:"policy"`
+	Tunnels  TunnelsConfig  `yaml:"tunnels"`
 }
 
 // ServerConfig controls the HTTP listener.
@@ -203,6 +205,52 @@ type PolicyConfig struct {
 	// SecureCRT tree for a large team is a few megabytes; the default leaves
 	// room for an unusually large one without letting an upload fill the disk.
 	MaxImportBytes int64 `yaml:"max_import_bytes"`
+
+	// AllowTCPTunnels lets users open listening ports on this server, so a
+	// database client or an RDP client on their own machine can reach a host
+	// only this server can see.
+	//
+	// Off by default, and the reason is the word "listening". Everything else
+	// here reaches outward; this accepts inbound connections on a shared
+	// machine, and whoever can reach that port gets whatever is behind it
+	// without authenticating to bkd at all. The bind address below is the
+	// other half of that decision.
+	AllowTCPTunnels bool `yaml:"allow_tcp_tunnels"`
+}
+
+// TunnelsConfig holds the operational settings for port forwarding. The
+// permission to use it at all lives in PolicyConfig; this is where it lands.
+type TunnelsConfig struct {
+	// Bind is the address TCP and SOCKS tunnels listen on.
+	//
+	// Loopback by default, which on its own makes the feature useless from
+	// anywhere but this machine — deliberately. Widening it is a decision an
+	// operator should make once, knowingly, rather than inherit.
+	Bind string `yaml:"bind"`
+
+	// PortRange bounds the ports allocated to tunnels, as "low-high", so a
+	// firewall rule can be written once and stay true.
+	PortRange string `yaml:"port_range"`
+
+	// Domain is the wildcard base under which a device's web interface is
+	// served, e.g. "tunnels.bkd.example.com" — each tunnel gets its own
+	// hostname beneath it.
+	//
+	// Empty disables web tunnels entirely, and that is the safe default
+	// rather than an oversight. A device's own pages cannot be served from
+	// bkd's origin: the CSRF cookie is readable by JavaScript by design, so
+	// a script on a compromised switch would inherit the whole session. A
+	// separate origin is what makes the feature possible at all, and without
+	// one configured there is nowhere safe to put it.
+	Domain string `yaml:"domain"`
+
+	// MaxPerUser caps concurrent tunnels per person.
+	MaxPerUser int `yaml:"max_per_user"`
+
+	// IdleTimeout closes a tunnel nothing has used. The cost being reclaimed
+	// is the SSH connection underneath it, which on network equipment is a
+	// vty line.
+	IdleTimeout time.Duration `yaml:"idle_timeout"`
 }
 
 // Default returns the built-in configuration.
@@ -263,6 +311,14 @@ func Default() Config {
 			RecordAllSessions:    false,
 			MaxUploadBytes:       1 << 30,  // 1 GiB per request
 			MaxImportBytes:       64 << 20, // 64 MiB
+			AllowTCPTunnels:      false,
+		},
+		Tunnels: TunnelsConfig{
+			Bind:        "127.0.0.1",
+			PortRange:   "34000-34999",
+			Domain:      "",
+			MaxPerUser:  8,
+			IdleTimeout: time.Hour,
 		},
 	}
 }
@@ -477,6 +533,8 @@ func (c Config) Validate() error {
 			c.Policy.MaxImportBytes))
 	}
 
+	errs = append(errs, c.Tunnels.validate(c.Policy.AllowTCPTunnels)...)
+
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error":
 	default:
@@ -489,4 +547,71 @@ func (c Config) Validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// validate checks the tunnel settings.
+//
+// The port range and bind address are only enforced when listeners are
+// actually allowed: an operator who leaves them at nonsense values with the
+// feature switched off has not made a mistake worth refusing to start over.
+func (t TunnelsConfig) validate(listenersAllowed bool) []error {
+	var errs []error
+
+	if t.MaxPerUser < 1 || t.MaxPerUser > 128 {
+		errs = append(errs, fmt.Errorf(
+			"tunnels.max_per_user %d must be between 1 and 128", t.MaxPerUser))
+	}
+	if t.IdleTimeout < time.Minute || t.IdleTimeout > 24*time.Hour {
+		errs = append(errs, fmt.Errorf(
+			"tunnels.idle_timeout %s must be between a minute and a day", t.IdleTimeout))
+	}
+
+	if t.Domain != "" {
+		if strings.ContainsAny(t.Domain, "/: ") || strings.HasPrefix(t.Domain, ".") {
+			errs = append(errs, fmt.Errorf(
+				"tunnels.domain %q must be a bare hostname such as tunnels.example.com", t.Domain))
+		}
+	}
+
+	if !listenersAllowed {
+		return errs
+	}
+
+	if net.ParseIP(t.Bind) == nil {
+		errs = append(errs, fmt.Errorf(
+			"tunnels.bind %q must be an IP address; it is what decides who can reach a "+
+				"forwarded port, so a hostname that resolves differently later is not "+
+				"a safe way to express it", t.Bind))
+	}
+	if _, _, err := ParsePortRange(t.PortRange); err != nil {
+		errs = append(errs, fmt.Errorf("tunnels.port_range: %w", err))
+	}
+
+	return errs
+}
+
+// ParsePortRange reads a "low-high" range.
+func ParsePortRange(spec string) (low, high int, err error) {
+	before, after, ok := strings.Cut(spec, "-")
+	if !ok {
+		return 0, 0, fmt.Errorf("%q must be written low-high, such as 34000-34999", spec)
+	}
+
+	low, err = strconv.Atoi(strings.TrimSpace(before))
+	if err != nil {
+		return 0, 0, fmt.Errorf("%q is not a port number", before)
+	}
+	high, err = strconv.Atoi(strings.TrimSpace(after))
+	if err != nil {
+		return 0, 0, fmt.Errorf("%q is not a port number", after)
+	}
+
+	// Privileged ports are excluded outright. bkd runs unprivileged and could
+	// not bind them anyway, so allowing them here would only produce a
+	// confusing failure much later.
+	if low < 1024 || high > 65535 || low > high {
+		return 0, 0, fmt.Errorf(
+			"%q must be an ascending range within 1024-65535", spec)
+	}
+	return low, high, nil
 }

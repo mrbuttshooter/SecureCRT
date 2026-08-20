@@ -160,3 +160,39 @@ policy:
   # request over either cap is refused outright rather than truncated.
   max_upload_bytes: 1073741824   # 1 GiB per upload request
   max_import_bytes: 67108864     # 64 MiB per imported configuration
+
+  # Off by default, and the word that matters is "listening". Everything else
+  # here reaches outward; this accepts inbound connections on a shared machine,
+  # and whoever can reach the port gets whatever is behind it without
+  # authenticating to bkd at all. Turn it on only alongside tunnels.bind below.
+  #
+  # It is what lets somebody point a database client, an RDP client or a
+  # browser's SOCKS setting at a host only this server can see.
+  allow_tcp_tunnels: false
+
+tunnels:
+  # Where forwarded ports listen. Loopback makes the feature useless from
+  # anywhere but this machine, which is the safe default; widening it is a
+  # decision to make once, knowingly.
+  bind: "127.0.0.1"
+
+  # The ports tunnels are allocated from, so one firewall rule can cover them
+  # and stay true. Privileged ports are refused: bkd runs unprivileged.
+  port_range: "34000-34999"
+
+  # The wildcard base for reaching a device's own web interface — a switch or
+  # router GUI — through a bastion, with no open port and nothing to configure
+  # on the laptop. Each tunnel is served at <id>.<this domain>.
+  #
+  # Empty disables it, and that is a safe default rather than an oversight. A
+  # device's pages cannot be served from bkd's own origin: the CSRF cookie is
+  # readable by JavaScript by design, so a script on a compromised switch
+  # would inherit the whole session and every credential behind it. A separate
+  # origin is what makes this possible at all.
+  #
+  # To enable: point a wildcard DNS record (*.tunnels.example.com) at this
+  # host and let Caddy issue certificates on demand. See docs/TUNNELS.md.
+  domain: ""
+
+  max_per_user: 8
+  idle_timeout: 1h

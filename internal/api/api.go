@@ -14,6 +14,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/files"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
 	"github.com/mrbuttshooter/securecrt/internal/portability"
+	"github.com/mrbuttshooter/securecrt/internal/proto/tunnel"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
@@ -98,6 +99,9 @@ type API struct {
 	fileSessions *files.Manager
 	transfers    *files.Transfers
 
+	// Tunnels: port forwarding and the device web proxy.
+	tunnels *tunnel.Manager
+
 	// Import and export, plus the previews waiting to be committed.
 	portability *portability.Service
 	staging     *staging
@@ -127,6 +131,7 @@ type Deps struct {
 	FileSessions *files.Manager
 	Transfers    *files.Transfers
 	Portability  *portability.Service
+	Tunnels      *tunnel.Manager
 }
 
 // New builds an API.
@@ -158,6 +163,8 @@ func New(cfg Config, deps Deps, log *slog.Logger) (*API, error) {
 
 		fileSessions: deps.FileSessions,
 		transfers:    deps.Transfers,
+
+		tunnels: deps.Tunnels,
 
 		portability: deps.Portability,
 		staging:     newStaging(),
@@ -204,6 +211,26 @@ func ConfigFrom(c config.Config) (Config, error) {
 		MaxImportBytes:       c.Policy.MaxImportBytes,
 	}, nil
 }
+
+// TunnelProxy returns the handler for a device's own web interface, and
+// whether this server serves them at all.
+//
+// Mounted by the server rather than under /api, because it answers every path
+// on a hostname of its own — a device's pages are served at the root or their
+// absolute links break. It carries the same authentication and MFA as
+// everything else, and deliberately not the CSRF middleware: a device has
+// never heard of this application's token, and it is on a separate origin,
+// which is where the protection comes from. See handleTunnelProxy.
+func (a *API) TunnelProxy() (http.Handler, bool) {
+	if a.tunnels == nil || !a.tunnels.WebTunnelsEnabled() {
+		return nil, false
+	}
+	return chain(http.HandlerFunc(a.handleTunnelProxy), a.withAuth, a.withMFA), true
+}
+
+// IsTunnelHost reports whether a request addresses a tunnel's hostname rather
+// than the application.
+func (a *API) IsTunnelHost(r *http.Request) bool { return a.tunnelHostRequest(r) }
 
 // mfaRequiredFor reports whether this user must complete a second factor.
 func (a *API) mfaRequiredFor(u users.User) bool {
@@ -270,6 +297,9 @@ func (a *API) Routes() http.Handler {
 		"DELETE /api/files/entry",
 		"POST /api/files/copy",
 		"GET /api/files/transfers", "DELETE /api/files/transfers/{id}",
+
+		"GET /api/tunnels", "POST /api/tunnels", "DELETE /api/tunnels/{id}",
+		"GET /api/tunnels/config",
 
 		"GET /api/portability/config", "POST /api/portability/import",
 		"DELETE /api/portability/staged/{id}", "POST /api/portability/export",
@@ -419,6 +449,15 @@ func (a *API) routeAuthenticated(w http.ResponseWriter, r *http.Request) {
 		a.handleListTransfers(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/files/transfers/"):
 		a.handleCancelTransfer(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/tunnels/config":
+		a.handleTunnelConfig(w, r)
+	case r.Method == http.MethodGet && path == "/api/tunnels":
+		a.handleListTunnels(w, r)
+	case r.Method == http.MethodPost && path == "/api/tunnels":
+		a.handleOpenTunnel(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/tunnels/"):
+		a.handleCloseTunnel(w, r)
 
 	case r.Method == http.MethodGet && path == "/api/credentials":
 		a.handleListCredentials(w, r)

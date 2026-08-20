@@ -22,6 +22,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/files"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
 	"github.com/mrbuttshooter/securecrt/internal/portability"
+	"github.com/mrbuttshooter/securecrt/internal/proto/tunnel"
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store"
@@ -59,6 +60,7 @@ type Server struct {
 	// jobs — host-to-host copies and recursive deletes.
 	fileSessions *files.Manager
 	transfers    *files.Transfers
+	tunnels      *tunnel.Manager
 }
 
 // New builds a Server: it opens the database, applies migrations if
@@ -186,6 +188,20 @@ func (s *Server) buildAPI(ctx context.Context) error {
 	s.fileSessions = files.NewManager(dialer, s.log)
 	s.transfers = files.NewTransfers(s.fileSessions, s.log)
 
+	// Port range failures are already refused by config validation when
+	// listeners are enabled; when they are not, a nonsense range is simply
+	// never used, so a parse failure here is not worth refusing to start.
+	portLow, portHigh, _ := config.ParsePortRange(s.cfg.Tunnels.PortRange)
+	s.tunnels = tunnel.NewManager(tunnel.Config{
+		AllowListeners: s.cfg.Policy.AllowTCPTunnels,
+		Bind:           s.cfg.Tunnels.Bind,
+		PortLow:        portLow,
+		PortHigh:       portHigh,
+		Domain:         s.cfg.Tunnels.Domain,
+		MaxPerUser:     s.cfg.Tunnels.MaxPerUser,
+		IdleTimeout:    s.cfg.Tunnels.IdleTimeout,
+	}, dialer, s.log)
+
 	s.api, err = api.New(apiCfg, api.Deps{
 		DB:           s.db,
 		Users:        userStore,
@@ -200,6 +216,7 @@ func (s *Server) buildAPI(ctx context.Context) error {
 		Terminals:    s.terminals,
 		FileSessions: s.fileSessions,
 		Transfers:    s.transfers,
+		Tunnels:      s.tunnels,
 		Portability:  portability.NewService(sessionTree, credentialStore, hostKeyStore, s.log),
 		Connector:    connector,
 		HostKeys:     hostKeyStore,
@@ -327,6 +344,12 @@ func (s *Server) warnOnRiskyPolicy() {
 	if !s.cfg.Auth.OIDC.Enabled {
 		s.log.Warn("single sign-on is not configured; only local password accounts can sign in")
 	}
+	if s.cfg.Policy.AllowTCPTunnels {
+		s.log.Warn("policy allows tunnels to open listening ports on this server; "+
+			"whoever can reach the bind address reaches whatever is behind them, "+
+			"with no account here",
+			"bind", s.cfg.Tunnels.Bind, "ports", s.cfg.Tunnels.PortRange)
+	}
 }
 
 // closeResources ends live sessions, zeroes key material and closes the
@@ -334,8 +357,8 @@ func (s *Server) warnOnRiskyPolicy() {
 //
 // The order is deliberate:
 //
-//  1. Transfers and file sessions, so a copy in flight is cancelled rather
-//     than left writing into a connection about to disappear.
+//  1. Tunnels, transfers and file sessions, so work in flight is cancelled
+//     rather than left writing into a connection about to disappear.
 //  2. Terminals, so every remote shell gets an orderly exit rather than a
 //     dropped TCP connection some host has to time out.
 //  3. The connection pool, which sends each host a clean SSH disconnect and
@@ -343,6 +366,13 @@ func (s *Server) warnOnRiskyPolicy() {
 //  4. Key material, before the database, so a crash while closing the
 //     database still leaves no key in a core dump.
 func (s *Server) closeResources() {
+	// Tunnels first: each holds a lease on a shared connection, and a
+	// forwarded connection in flight should stop before the connection
+	// underneath it is torn down.
+	if s.tunnels != nil {
+		s.tunnels.Shutdown()
+	}
+
 	if s.transfers != nil {
 		s.transfers.Shutdown()
 	}
@@ -417,7 +447,29 @@ func (s *Server) routes() http.Handler {
 		})
 	}
 
-	return securityHeaders(mux)
+	app := securityHeaders(mux)
+
+	// A tunnel's hostname is answered by the proxy rather than by the
+	// application, and *without* the application's security headers — a
+	// device's own pages get a policy of their own, set per response, because
+	// this one is written for markup we control and theirs is not.
+	//
+	// Branching on Host rather than on path because the whole point of the
+	// separate origin is that a device's absolute links resolve: the proxy
+	// owns the root of its hostname.
+	if s.api != nil {
+		if proxy, ok := s.api.TunnelProxy(); ok {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if s.api.IsTunnelHost(r) {
+					proxy.ServeHTTP(w, r)
+					return
+				}
+				app.ServeHTTP(w, r)
+			})
+		}
+	}
+
+	return app
 }
 
 // securityHeaders applies the baseline response headers.
