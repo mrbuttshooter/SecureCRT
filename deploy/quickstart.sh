@@ -63,7 +63,8 @@ EXTERNAL_URL="https://${HOSTNAME}"
 info "installing build and runtime dependencies"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl git ca-certificates debian-keyring debian-archive-keyring apt-transport-https unzip
+apt-get install -y -qq curl git make ca-certificates \
+    debian-keyring debian-archive-keyring apt-transport-https
 
 if ! command -v caddy >/dev/null; then
     info "installing Caddy"
@@ -93,7 +94,19 @@ if ! command -v node >/dev/null || [[ "$(node -v | cut -d. -f1 | tr -d v)" -lt 2
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
     apt-get install -y -qq nodejs
 fi
-corepack enable >/dev/null 2>&1 || npm install -g pnpm >/dev/null 2>&1
+# pnpm comes from corepack, which reads the exact version out of
+# web/package.json. The prompt is disabled because there is nobody here to
+# answer it: corepack otherwise stops to ask before downloading, and a script
+# reading from a pipe has no stdin to say yes with.
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+corepack enable >/dev/null 2>&1 || true
+command -v pnpm >/dev/null || npm install -g pnpm@10 >/dev/null 2>&1 || true
+
+# Fail here, cheaply and by name, rather than three minutes into a build.
+for tool in go node make git; do
+    command -v "$tool" >/dev/null || die "$tool is missing after the install step"
+done
+command -v pnpm >/dev/null || die "pnpm is missing after the install step"
 
 # --- Source and build ---------------------------------------------------------
 
