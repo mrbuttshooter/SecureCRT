@@ -11,10 +11,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/mrbuttshooter/securecrt/internal/api"
+	"github.com/mrbuttshooter/securecrt/internal/audit"
+	"github.com/mrbuttshooter/securecrt/internal/auth"
 	"github.com/mrbuttshooter/securecrt/internal/config"
+	"github.com/mrbuttshooter/securecrt/internal/credentials"
 	"github.com/mrbuttshooter/securecrt/internal/store"
+	"github.com/mrbuttshooter/securecrt/internal/users"
 	"github.com/mrbuttshooter/securecrt/internal/vault"
 )
 
@@ -30,6 +36,7 @@ type Server struct {
 	// use — never an ordinary user's vault.
 	master vault.Key
 
+	api  *api.API
 	http *http.Server
 }
 
@@ -67,6 +74,11 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Server, err
 		master: master,
 	}
 
+	if err := s.buildAPI(ctx); err != nil {
+		s.closeResources()
+		return nil, err
+	}
+
 	s.http = &http.Server{
 		Addr:         cfg.Server.Bind,
 		Handler:      s.routes(),
@@ -77,6 +89,78 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Server, err
 	}
 
 	return s, nil
+}
+
+// buildAPI wires the service layer and mounts the HTTP API.
+//
+// Single sign-on discovery happens here, so a misconfigured issuer stops the
+// server starting rather than failing on a user's first sign-in attempt.
+func (s *Server) buildAPI(ctx context.Context) error {
+	userStore := users.NewStore(s.db)
+
+	vaultService, err := users.NewVaultService(userStore, s.cache, s.master, users.VaultServiceConfig{
+		Argon2Time:     s.cfg.Vault.Argon2Time,
+		Argon2MemoryKB: s.cfg.Vault.Argon2MemoryKB,
+		Argon2Threads:  s.cfg.Vault.Argon2Threads,
+		SSOUnlockMode:  users.SSOUnlockMode(s.cfg.Vault.SSOUnlockMode),
+	})
+	if err != nil {
+		return err
+	}
+
+	sessions, err := auth.NewSessionStore(s.db, auth.SessionConfig{
+		IdleTTL:       s.cfg.Auth.SessionIdleTTL,
+		AbsoluteTTL:   s.cfg.Auth.SessionAbsoluteTTL,
+		SecureCookies: s.cfg.Auth.SecureCookies,
+	})
+	if err != nil {
+		return err
+	}
+
+	throttle, err := auth.NewThrottle(s.db, auth.ThrottleConfig{
+		MaxPerAccount:   s.cfg.Auth.MaxAttemptsPerAccount,
+		MaxPerAddress:   s.cfg.Auth.MaxAttemptsPerAddress,
+		Window:          s.cfg.Auth.LockoutWindow,
+		LockoutDuration: s.cfg.Auth.LockoutDuration,
+	})
+	if err != nil {
+		return err
+	}
+
+	var oidcProvider *auth.OIDCProvider
+	if s.cfg.Auth.OIDC.Enabled {
+		oidcProvider, err = auth.NewOIDCProvider(ctx, auth.OIDCConfig{
+			Enabled:        true,
+			Issuer:         s.cfg.Auth.OIDC.Issuer,
+			ClientID:       s.cfg.Auth.OIDC.ClientID,
+			ClientSecret:   s.cfg.Auth.OIDC.ClientSecret,
+			RedirectURL:    strings.TrimRight(s.cfg.Server.ExternalURL, "/") + "/api/auth/sso/callback",
+			AllowedTenants: s.cfg.Auth.OIDC.AllowedTenants,
+			AutoProvision:  s.cfg.Auth.OIDC.AutoProvision,
+		}, s.master)
+		if err != nil {
+			return fmt.Errorf("server: single sign-on: %w", err)
+		}
+		s.log.Info("single sign-on enabled", "issuer", s.cfg.Auth.OIDC.Issuer)
+	}
+
+	apiCfg, err := api.ConfigFrom(s.cfg)
+	if err != nil {
+		return err
+	}
+
+	s.api, err = api.New(apiCfg, api.Deps{
+		DB:          s.db,
+		Users:       userStore,
+		Vaults:      vaultService,
+		Sessions:    sessions,
+		Throttle:    throttle,
+		OIDC:        oidcProvider,
+		Credentials: credentials.NewStore(s.db),
+		Audit:       audit.NewRecorder(s.db, s.log),
+		MasterKey:   s.master,
+	}, s.log)
+	return err
 }
 
 // ensureDirs creates the writable state directories with restrictive modes.
@@ -188,6 +272,17 @@ func (s *Server) warnOnRiskyPolicy() {
 	if !s.cfg.Policy.RequireHostKeyVerify {
 		s.log.Warn("policy does not require host key verification; connections are exposed to man-in-the-middle")
 	}
+	if s.cfg.Vault.SSOUnlockMode == config.SSOUnlockServerManaged {
+		s.log.Warn("vault.sso_unlock_mode is server_managed: single-sign-on users' credentials are " +
+			"wrapped under the server master key, so a stolen database together with that key would " +
+			"expose them. Set it to passphrase to restore that protection.")
+	}
+	if !s.cfg.Auth.SecureCookies {
+		s.log.Warn("auth.secure_cookies is disabled; session cookies will be sent over plain HTTP")
+	}
+	if !s.cfg.Auth.OIDC.Enabled {
+		s.log.Warn("single sign-on is not configured; only local password accounts can sign in")
+	}
 }
 
 // closeResources zeroes key material and closes the database.
@@ -217,6 +312,11 @@ func (s *Server) routes() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"status":"ok","version":%q}`+"\n", config.Version)
 	})
+
+	// The API mounts itself under /api and brings its own middleware chain.
+	if s.api != nil {
+		mux.Handle("/api/", s.api.Routes())
+	}
 
 	// Readiness: the process can serve traffic, which requires the database.
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {

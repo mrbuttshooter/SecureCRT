@@ -25,6 +25,14 @@ func TestDefaultsAreSafe(t *testing.T) {
 	if !strings.HasPrefix(c.Server.Bind, "127.0.0.1:") {
 		t.Errorf("default bind must be loopback, got %q", c.Server.Bind)
 	}
+	// The default must be the mode where a stolen database is useless, not
+	// the more convenient one that gives that guarantee up.
+	if c.Vault.SSOUnlockMode != SSOUnlockPassphrase {
+		t.Errorf("default sso_unlock_mode = %q, want %q", c.Vault.SSOUnlockMode, SSOUnlockPassphrase)
+	}
+	if !c.Auth.SecureCookies {
+		t.Error("cookies must be marked Secure by default")
+	}
 }
 
 func TestLoadFileOverridesDefaults(t *testing.T) {
@@ -81,7 +89,7 @@ func TestEnvOverridesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(EnvPrefix+"DB_DSN", "from-env")
-	t.Setenv(EnvPrefix+"REQUIRE_MFA", "true")
+	t.Setenv(EnvPrefix+"MFA_POLICY", "required")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -90,8 +98,8 @@ func TestEnvOverridesFile(t *testing.T) {
 	if cfg.Database.DSN != "from-env" {
 		t.Errorf("dsn = %q, want env value to win", cfg.Database.DSN)
 	}
-	if !cfg.Auth.RequireMFA {
-		t.Error("BKD_REQUIRE_MFA not applied")
+	if cfg.Auth.MFAPolicy != MFARequired {
+		t.Errorf("BKD_MFA_POLICY not applied: %q", cfg.Auth.MFAPolicy)
 	}
 }
 
@@ -124,12 +132,100 @@ func TestValidateCollectsAllErrors(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsRefreshShorterThanAccess(t *testing.T) {
+func TestValidateRejectsAbsoluteTTLShorterThanIdle(t *testing.T) {
 	c := Default()
-	c.Auth.AccessTokenTTL = time.Hour
-	c.Auth.RefreshTokenTTL = time.Minute
+	c.Auth.SessionIdleTTL = 8 * time.Hour
+	c.Auth.SessionAbsoluteTTL = time.Hour
 	if err := c.Validate(); err == nil {
-		t.Fatal("refresh TTL shorter than access TTL must be rejected")
+		t.Fatal("an absolute session TTL below the idle TTL must be rejected")
+	}
+}
+
+// TestValidateRefusesUncheckedMultiTenantSSO is the configuration guard that
+// matters most for a company deployment: pointing at Entra's /common endpoint
+// without naming the tenants means any Microsoft account in the world can sign
+// in.
+func TestValidateRefusesUncheckedMultiTenantSSO(t *testing.T) {
+	c := Default()
+	c.Auth.OIDC = OIDCConfig{
+		Enabled:      true,
+		Issuer:       "https://login.microsoftonline.com/common/v2.0",
+		ClientID:     "client",
+		ClientSecret: "secret",
+	}
+
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("a multi-tenant issuer with no tenant allowlist must be refused")
+	}
+	if !strings.Contains(err.Error(), "allowed_tenants") {
+		t.Errorf("the error should name the missing setting, got: %v", err)
+	}
+
+	c.Auth.OIDC.AllowedTenants = []string{"11111111-2222-3333-4444-555555555555"}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("naming the tenants should make it valid: %v", err)
+	}
+}
+
+// TestValidateRequiresSSOSecrets keeps a half-configured provider from
+// starting and failing at a user's first sign-in instead.
+func TestValidateRequiresSSOSecrets(t *testing.T) {
+	base := OIDCConfig{
+		Enabled:      true,
+		Issuer:       "https://login.microsoftonline.com/tenant-id/v2.0",
+		ClientID:     "client",
+		ClientSecret: "secret",
+	}
+
+	for name, mutate := range map[string]func(*OIDCConfig){
+		"no issuer":        func(o *OIDCConfig) { o.Issuer = "" },
+		"no client id":     func(o *OIDCConfig) { o.ClientID = "" },
+		"no client secret": func(o *OIDCConfig) { o.ClientSecret = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := Default()
+			c.Auth.OIDC = base
+			mutate(&c.Auth.OIDC)
+			if err := c.Validate(); err == nil {
+				t.Fatal("expected rejection")
+			}
+		})
+	}
+
+	// Disabled single sign-on needs none of it.
+	c := Default()
+	c.Auth.OIDC = OIDCConfig{Enabled: false}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("a disabled provider must not require configuration: %v", err)
+	}
+}
+
+func TestValidateSSOUnlockMode(t *testing.T) {
+	for _, mode := range []string{SSOUnlockPassphrase, SSOUnlockServerManaged} {
+		c := Default()
+		c.Vault.SSOUnlockMode = mode
+		if err := c.Validate(); err != nil {
+			t.Errorf("%q should be valid: %v", mode, err)
+		}
+	}
+	for _, mode := range []string{"", "yes", "server", "managed"} {
+		c := Default()
+		c.Vault.SSOUnlockMode = mode
+		if err := c.Validate(); err == nil {
+			t.Errorf("%q should be refused", mode)
+		}
+	}
+}
+
+// TestValidateRefusesAddressLimitBelowAccountLimit guards a combination that
+// would let one user's own retries lock out their whole office.
+func TestValidateRefusesAddressLimitBelowAccountLimit(t *testing.T) {
+	c := Default()
+	c.Auth.MaxAttemptsPerAccount = 10
+	c.Auth.MaxAttemptsPerAddress = 3
+	if err := c.Validate(); err == nil {
+		t.Fatal("a per-address limit below the per-account limit must be refused")
 	}
 }
 
