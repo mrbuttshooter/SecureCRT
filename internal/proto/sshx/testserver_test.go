@@ -46,6 +46,12 @@ type testServerOptions struct {
 	HostKeySeed []byte
 	// Handler overrides the default echoing shell.
 	Handler gssh.Handler
+
+	// Configure adjusts the server before it starts serving. It has to happen
+	// before Serve rather than after: the accept loop reads these fields, so
+	// setting them on a running server is a data race, which is exactly what
+	// the first version of the jump-host tests did.
+	Configure func(*gssh.Server)
 }
 
 func startTestServer(t *testing.T, opts testServerOptions) *testServer {
@@ -90,6 +96,10 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 	}
 	if opts.Password == "" && opts.AuthorizedKey == nil {
 		t.Fatal("the test server must accept something, or every test would fail identically")
+	}
+
+	if opts.Configure != nil {
+		opts.Configure(ts.server)
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
