@@ -168,6 +168,21 @@ if ! curl -fsS -o /dev/null "${BASE_URL}/healthz"; then
     exit 1
 fi
 
+# Playwright refuses to launch when the browser build it was pinned against is
+# not the one present. That is a machine problem rather than a test failure,
+# and it produces fifteen identical "executable doesn't exist" errors that
+# look alarming, so fall back to whatever Chromium this host does have.
+if [[ -z "${BKD_E2E_CHROMIUM:-}" ]]; then
+    for candidate in "${PLAYWRIGHT_BROWSERS_PATH:-/opt/pw-browsers}/chromium" \
+                     /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/google-chrome; do
+        if [[ -x "$candidate" ]]; then
+            export BKD_E2E_CHROMIUM="$candidate"
+            info "using Chromium at $candidate"
+            break
+        fi
+    done
+fi
+
 info "running the browser suite"
 set +e
 (cd web && \
@@ -177,6 +192,7 @@ set +e
     BKD_E2E_SSH_PORT_2="$SSH_PORT_2" \
     BKD_E2E_SSH_USER="$SSH_USER" \
     BKD_E2E_SSH_PASSWORD="$SSH_PASSWORD" \
+    BKD_E2E_CHROMIUM="${BKD_E2E_CHROMIUM:-}" \
     npx playwright test "$@")
 STATUS=$?
 set -e

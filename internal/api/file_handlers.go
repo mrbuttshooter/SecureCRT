@@ -28,12 +28,13 @@ import (
 //
 // Nothing is spooled to this server's disk in either direction.
 
-// maxUploadBytes bounds a single upload request.
+// defaultMaxUploadBytes bounds a single upload request when the operator has
+// not chosen a limit of their own.
 //
 // Not a limit on file size: the interface splits a large upload into chunks
 // and resumes each at an offset, so this bounds one request rather than one
 // file. It exists so a runaway client cannot hold an unbounded read open.
-const maxUploadBytes = 1 << 30 // 1 GiB per request
+const defaultMaxUploadBytes int64 = 1 << 30 // 1 GiB per request
 
 // fileSession resolves an already-open file session from the "session" query
 // parameter.
@@ -636,10 +637,24 @@ func (a *API) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	written, copyErr := io.Copy(writer, io.LimitReader(r.Body, maxUploadBytes))
+	// MaxBytesReader rather than io.LimitReader: a LimitReader stops at the
+	// cap and reports clean end-of-input, so an oversized upload would be
+	// silently truncated and answered with 200 — the caller would be told
+	// their file arrived when what landed on the host was half a file.
+	limit := a.cfg.uploadLimit()
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+
+	written, copyErr := io.Copy(writer, r.Body)
 	closeErr := writer.Close()
 
 	if copyErr != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(copyErr, &tooBig) {
+			writeError(w, a.log, http.StatusRequestEntityTooLarge, CodeBadRequest,
+				fmt.Sprintf("A single upload cannot exceed %d MiB. "+
+					"Send it in pieces using the offset parameter.", limit>>20))
+			return
+		}
 		a.log.Debug("upload interrupted", "path", target, "error", copyErr)
 		writeError(w, a.log, http.StatusBadGateway, CodeInternal,
 			"The upload stopped partway. It can be resumed from where it stopped.")

@@ -9,8 +9,9 @@ import { Security } from './views/Security'
 import { Workspace } from './views/Workspace'
 import { KnownHosts } from './views/KnownHosts'
 import { Files } from './views/Files'
+import { Transfer } from './views/Transfer'
 
-type Tab = 'terminal' | 'files' | 'credentials' | 'hosts' | 'sessions' | 'security'
+type Tab = 'terminal' | 'files' | 'credentials' | 'hosts' | 'transfer' | 'sessions' | 'security'
 
 /**
  * App decides what to show from a single whoami response.
@@ -122,6 +123,8 @@ export function App() {
                 onClick={() => setTab('credentials')}>Credentials</button>
         <button aria-current={tab === 'hosts' ? 'page' : undefined}
                 onClick={() => setTab('hosts')}>Known hosts</button>
+        <button aria-current={tab === 'transfer' ? 'page' : undefined}
+                onClick={() => setTab('transfer')}>Import / export</button>
         <button aria-current={tab === 'sessions' ? 'page' : undefined}
                 onClick={() => setTab('sessions')}>Signed in</button>
         <button aria-current={tab === 'security' ? 'page' : undefined}
@@ -140,6 +143,7 @@ export function App() {
       {tab === 'files' && <Files />}
       {tab === 'credentials' && <Credentials />}
       {tab === 'hosts' && <KnownHosts />}
+      {tab === 'transfer' && <Transfer />}
       {tab === 'sessions' && <Sessions />}
       {tab === 'security' && <Security me={me} onChanged={refresh} />}
     </main>

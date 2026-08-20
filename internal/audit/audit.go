@@ -68,6 +68,7 @@ const (
 
 	// Import and export. Export is the most security-relevant action in the
 	// system, which is why it has its own severity floor below.
+	ActionImportPreviewed   Action = "portability.previewed"
 	ActionImported          Action = "portability.imported"
 	ActionExported          Action = "portability.exported"
 	ActionExportedPlaintext Action = "portability.exported_plaintext"

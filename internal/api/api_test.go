@@ -19,8 +19,10 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
 	"github.com/mrbuttshooter/securecrt/internal/files"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
+	"github.com/mrbuttshooter/securecrt/internal/portability"
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
+	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/store/storetest"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
 	"github.com/mrbuttshooter/securecrt/internal/users"
@@ -45,6 +47,7 @@ type harness struct {
 	tree      *sessions.Store
 	terminals *terminal.Manager
 	hostKeys  *hostkeys.Store
+	db        *store.DB
 
 	cookies map[string]string
 	csrf    string
@@ -138,6 +141,7 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 		Terminals:    terminals,
 		FileSessions: fileSessions,
 		Transfers:    transfers,
+		Portability:  portability.NewService(sessionTree, credStore, hostKeyStore, quiet),
 		Connector:    connector,
 		HostKeys:     hostKeyStore,
 	}, quiet)
@@ -151,6 +155,7 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 	h := &harness{
 		t: t, api: a, server: srv, users: userStore, vaults: vaultSvc,
 		cache: cache, tree: sessionTree, terminals: terminals, hostKeys: hostKeyStore,
+		db:      db,
 		cookies: map[string]string{},
 	}
 

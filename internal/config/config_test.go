@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -234,5 +235,107 @@ func TestValidateRejectsRelativeMasterKeyPath(t *testing.T) {
 	c.Vault.MasterKeyPath = "master.key"
 	if err := c.Validate(); err == nil {
 		t.Fatal("relative master key path must be rejected")
+	}
+}
+
+// TestTheShippedExampleConfigLoads is the cheapest guard there is against the
+// most embarrassing kind of first-boot failure.
+//
+// Load decodes with KnownFields(true), so a key in deploy/config.example.yaml
+// that no longer exists in the struct — a rename, a removal, a typo — makes
+// the server refuse to start for every operator who followed the docs. The
+// example is not sample text; it is the file people copy.
+func TestTheShippedExampleConfigLoads(t *testing.T) {
+	const example = "../../deploy/config.example.yaml"
+
+	if _, err := os.Stat(example); err != nil {
+		t.Fatalf("the example config must exist: %v", err)
+	}
+
+	cfg, err := Load(example)
+	if err != nil {
+		t.Fatalf("deploy/config.example.yaml does not load: %v", err)
+	}
+
+	// Spot-check that the file was actually read rather than silently
+	// falling back to Default() — the defaults would pass Validate either way.
+	if cfg.Log.Format != "json" {
+		t.Errorf("log.format = %q, want the value from the example file", cfg.Log.Format)
+	}
+}
+
+// TestValidateBoundsTheBodySizeLimits checks both ends of each cap. A limit
+// large enough to be meaningless is the same as having no limit at all.
+func TestValidateBoundsTheBodySizeLimits(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"upload zero", func(c *Config) { c.Policy.MaxUploadBytes = 0 }},
+		{"upload negative", func(c *Config) { c.Policy.MaxUploadBytes = -1 }},
+		{"upload absurd", func(c *Config) { c.Policy.MaxUploadBytes = 1 << 50 }},
+		{"import zero", func(c *Config) { c.Policy.MaxImportBytes = 0 }},
+		{"import negative", func(c *Config) { c.Policy.MaxImportBytes = -1 }},
+		{"import absurd", func(c *Config) { c.Policy.MaxImportBytes = 1 << 40 }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Default()
+			tc.mutate(&c)
+			if err := c.Validate(); err == nil {
+				t.Fatal("must be refused")
+			}
+		})
+	}
+}
+
+// TestTheExampleConfigMentionsEverySetting keeps the documented file honest.
+//
+// Load starts from Default(), so an omitted key is invisible rather than
+// fatal — which means a setting added later can quietly never appear in the
+// file operators read. This walks the struct tags and insists each one is
+// mentioned. It is a shallow check by design: it proves a key was written
+// down, not that the comment beside it is any good.
+func TestTheExampleConfigMentionsEverySetting(t *testing.T) {
+	raw, err := os.ReadFile("../../deploy/config.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	present := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if key, _, ok := strings.Cut(trimmed, ":"); ok {
+			present[strings.TrimSpace(strings.TrimPrefix(key, "- "))] = true
+		}
+	}
+
+	var missing []string
+	var walk func(reflect.Type)
+	walk = func(t reflect.Type) {
+		for i := range t.NumField() {
+			field := t.Field(i)
+			tag, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
+			if tag == "" || tag == "-" {
+				continue
+			}
+			if !present[tag] {
+				missing = append(missing, tag)
+			}
+			if field.Type.Kind() == reflect.Struct {
+				walk(field.Type)
+			}
+		}
+	}
+	walk(reflect.TypeOf(Config{}))
+
+	if len(missing) > 0 {
+		t.Fatalf("deploy/config.example.yaml does not mention: %s\n"+
+			"Every setting belongs in the file operators copy, with a note on what it costs.",
+			strings.Join(missing, ", "))
 	}
 }

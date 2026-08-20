@@ -17,6 +17,7 @@ import (
 	"time"
 
 	gssh "github.com/gliderlabs/ssh"
+	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -772,5 +773,70 @@ func mkdirAt(t *testing.T, srv *sftpTestServer, rel string) {
 
 	if err := os.MkdirAll(filepath.Join(srv.Root, filepath.FromSlash(rel)), 0o755); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAnOversizedUploadIsRefusedNotTruncated guards a failure mode that is
+// worse than a rejection: the handler used to read the body through an
+// io.LimitReader, which stops at the cap and reports a clean end of input. A
+// file over the limit was therefore cut in half, written to the host, and
+// answered with 200 and a byte count — the user was told their file arrived.
+func TestAnOversizedUploadIsRefusedNotTruncated(t *testing.T) {
+	const limit = 1 << 20 // the smallest the configuration allows
+
+	h := signedInWithVault(t, func(c *config.Config) {
+		c.Policy.MaxUploadBytes = limit
+	})
+	srv := startSFTP(t, "hunter2")
+	sessionID := h.savedSFTPConnection(t, srv, "files host", "hunter2")
+	h.openFiles(t, sessionID)
+
+	target := path.Join(srv.Root, "oversized.bin")
+	body := bytes.Repeat([]byte("x"), limit+4096)
+
+	resp := h.upload(t, sessionID, target, 0, body)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("upload of %d bytes against a %d byte limit = %d, want 413",
+			len(body), limit, resp.StatusCode)
+	}
+
+	// The partial write that got as far as the host before the cap tripped is
+	// expected — resuming from an offset is how this interface works. What
+	// must not happen is a whole-looking file: the caller was told no, so
+	// nothing here may claim the upload completed.
+	info, err := os.Stat(target)
+	if err == nil && info.Size() >= int64(len(body)) {
+		t.Fatalf("the file on the host is %d bytes: the oversized upload was accepted after all",
+			info.Size())
+	}
+}
+
+// TestAnUploadInsideTheLimitStillSucceeds is the other half of the pair: the
+// cap must refuse what is over it without breaking what is under it. Sized
+// just below the limit so it exercises the same code path as the refusal.
+func TestAnUploadInsideTheLimitStillSucceeds(t *testing.T) {
+	const limit = 1 << 20
+
+	h := signedInWithVault(t, func(c *config.Config) {
+		c.Policy.MaxUploadBytes = limit
+	})
+	srv := startSFTP(t, "hunter2")
+	sessionID := h.savedSFTPConnection(t, srv, "files host", "hunter2")
+	h.openFiles(t, sessionID)
+
+	target := path.Join(srv.Root, "just-under.bin")
+	body := bytes.Repeat([]byte("y"), limit-1)
+
+	if resp := h.upload(t, sessionID, target, 0, body); resp.StatusCode != http.StatusOK {
+		t.Fatalf("upload of %d bytes against a %d byte limit = %d, want 200",
+			len(body), limit, resp.StatusCode)
+	}
+
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != int64(len(body)) {
+		t.Errorf("file on the host is %d bytes, want %d", info.Size(), len(body))
 	}
 }

@@ -163,6 +163,11 @@ func (a *API) handleVaultLock(w http.ResponseWriter, r *http.Request) {
 
 	a.vaults.Lock(u.ID, sess.ID)
 
+	// A staged import holds decrypted passwords in memory, so locking the
+	// vault has to take those with it — otherwise "lock" would leave the most
+	// sensitive thing the process is holding exactly where it was.
+	a.staging.forget(u.ID)
+
 	if err := a.sessions.SetVaultUnlocked(r.Context(), sess.ID, false); err != nil {
 		a.log.Warn("recording vault state", "error", err)
 	}

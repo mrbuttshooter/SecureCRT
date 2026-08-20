@@ -477,3 +477,169 @@ export function uploadFile(
     request.send(file)
   })
 }
+
+// --- import and export -------------------------------------------------------
+
+export type ImportSource = 'bundle' | 'securecrt' | 'ssh_config' | 'putty' | 'csv'
+
+export type ExportFormat =
+  | 'bundle' | 'ssh_config' | 'securecrt' | 'putty_reg' | 'json' | 'csv'
+
+export interface PortabilityConfig {
+  allow_plaintext_export: boolean
+  min_passphrase_length: number
+  max_upload_bytes: number
+  sources: ImportSource[]
+  formats: ExportFormat[]
+  formats_carrying_secret: ExportFormat[]
+}
+
+export interface ImportConflict {
+  kind: string
+  name: string
+  existing: string
+}
+
+export interface ImportPlan {
+  counts: {
+    folders: number
+    sessions: number
+    credentials: number
+    known_hosts: number
+  }
+  new_folders: string[]
+  new_sessions: string[]
+  conflicts: ImportConflict[]
+  warnings: string[]
+  has_secrets: boolean
+}
+
+export interface ImportPreview {
+  token: string
+  source: ImportSource
+  plan: ImportPlan
+  warnings: string[]
+  notes: string[]
+  expires: string
+}
+
+export interface ImportResult {
+  folders: number
+  sessions: number
+  credentials: number
+  known_hosts: number
+  skipped: number
+  warnings: string[]
+}
+
+/**
+ * previewImport uploads a configuration and asks what importing it would do.
+ *
+ * Nothing is written. The server stages the payload it described and returns
+ * a token; committing applies that exact staged copy, so what the user
+ * approved is what happens.
+ */
+export async function previewImport(
+  file: File,
+  source: ImportSource,
+  options: Record<string, string> = {},
+): Promise<ImportPreview> {
+  const body = new FormData()
+  body.append('source', source)
+  for (const [name, value] of Object.entries(options)) {
+    if (value) body.append(name, value)
+  }
+  body.append('file', file)
+
+  const headers: Record<string, string> = {}
+  const token = readCookie(CSRF_COOKIE)
+  if (token) headers[CSRF_HEADER] = token
+
+  const response = await fetch('/api/portability/preview', {
+    method: 'POST',
+    headers,
+    credentials: 'same-origin',
+    body,
+  })
+
+  const text = await response.text()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new ApiError(response.status, 'internal_error',
+      `The server returned an unexpected response (${response.status}).`)
+  }
+
+  if (!response.ok) {
+    const envelope = parsed as { error?: { code?: ErrorCode; message?: string } }
+    throw new ApiError(
+      response.status,
+      envelope?.error?.code ?? 'internal_error',
+      envelope?.error?.message ?? `The upload failed (${response.status}).`,
+    )
+  }
+  return parsed as ImportPreview
+}
+
+export interface ExportRequest {
+  format: ExportFormat
+  include_secrets?: boolean
+  include_known_hosts?: boolean
+  passphrase?: string
+  note?: string
+  confirm?: boolean
+}
+
+export interface ExportedFile {
+  blob: Blob
+  filename: string
+  /** What the format could not express, reported by the server. */
+  warnings: string[]
+}
+
+/**
+ * exportConnections downloads an export.
+ *
+ * fetch rather than a link, because the request needs a CSRF header and a
+ * body — and because the warnings come back in a header the interface has to
+ * show alongside the file.
+ */
+export async function exportConnections(request: ExportRequest): Promise<ExportedFile> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = readCookie(CSRF_COOKIE)
+  if (token) headers[CSRF_HEADER] = token
+
+  const response = await fetch('/api/portability/export', {
+    method: 'POST',
+    headers,
+    credentials: 'same-origin',
+    body: JSON.stringify(request),
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    let message = `The export failed (${response.status}).`
+    let code: ErrorCode = 'internal_error'
+    try {
+      const parsed = JSON.parse(text) as { error?: { code?: ErrorCode; message?: string } }
+      if (parsed.error?.message) message = parsed.error.message
+      if (parsed.error?.code) code = parsed.error.code
+    } catch {
+      // A non-JSON body means something upstream intervened.
+    }
+    throw new ApiError(response.status, code, message)
+  }
+
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const match = /filename="([^"]+)"/.exec(disposition)
+
+  const rawWarnings = response.headers.get('X-Export-Warnings') ?? ''
+  const warnings = rawWarnings ? rawWarnings.split(' | ').filter(Boolean) : []
+
+  return {
+    blob: await response.blob(),
+    filename: match?.[1] ?? 'export',
+    warnings,
+  }
+}

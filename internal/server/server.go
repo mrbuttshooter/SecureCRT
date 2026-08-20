@@ -21,6 +21,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
 	"github.com/mrbuttshooter/securecrt/internal/files"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
+	"github.com/mrbuttshooter/securecrt/internal/portability"
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store"
@@ -199,6 +200,7 @@ func (s *Server) buildAPI(ctx context.Context) error {
 		Terminals:    s.terminals,
 		FileSessions: s.fileSessions,
 		Transfers:    s.transfers,
+		Portability:  portability.NewService(sessionTree, credentialStore, hostKeyStore, s.log),
 		Connector:    connector,
 		HostKeys:     hostKeyStore,
 	}, s.log)

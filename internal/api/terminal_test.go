@@ -15,6 +15,7 @@ import (
 
 	"github.com/coder/websocket"
 	gssh "github.com/gliderlabs/ssh"
+	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
 	"golang.org/x/crypto/ssh"
 )
@@ -109,9 +110,21 @@ func startSSH(t *testing.T, password string) *sshTestServer {
 // --- harness helpers ---------------------------------------------------------
 
 // signedInWithVault returns a harness with a user signed in and a vault open.
-func signedInWithVault(t *testing.T) *harness {
+// harnessOption tweaks the configuration a harness is built with.
+type harnessOption func(*config.Config)
+
+// allowPlaintextExport turns on the policy switch that gates every
+// unencrypted export format.
+func allowPlaintextExport(c *config.Config) { c.Policy.AllowPlaintextExport = true }
+
+func signedInWithVault(t *testing.T, options ...harnessOption) *harness {
 	t.Helper()
-	h := newHarness(t, nil)
+
+	h := newHarness(t, func(c *config.Config) {
+		for _, option := range options {
+			option(c)
+		}
+	})
 	h.createLocalUser("alice@example.com", "correct horse battery staple", false)
 	h.login("alice@example.com", "correct horse battery staple")
 	h.post("/api/vault/enrol", map[string]string{"passphrase": "a long enough passphrase"})

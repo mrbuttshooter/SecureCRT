@@ -186,6 +186,18 @@ type PolicyConfig struct {
 	AllowPasswordAuth    bool `yaml:"allow_password_auth"`
 	RequireHostKeyVerify bool `yaml:"require_host_key_verify"`
 	RecordAllSessions    bool `yaml:"record_all_sessions"`
+
+	// MaxUploadBytes caps one file-upload request. It is not a cap on file
+	// size — the browser splits a large file into chunks and resumes each at
+	// an offset — so raising it changes how much a single request may carry,
+	// not what can be transferred. A request over the cap is refused rather
+	// than truncated.
+	MaxUploadBytes int64 `yaml:"max_upload_bytes"`
+
+	// MaxImportBytes caps an uploaded configuration awaiting preview. A
+	// SecureCRT tree for a large team is a few megabytes; the default leaves
+	// room for an unusually large one without letting an upload fill the disk.
+	MaxImportBytes int64 `yaml:"max_import_bytes"`
 }
 
 // Default returns the built-in configuration.
@@ -244,6 +256,8 @@ func Default() Config {
 			AllowPasswordAuth:    true,
 			RequireHostKeyVerify: true,
 			RecordAllSessions:    false,
+			MaxUploadBytes:       1 << 30,  // 1 GiB per request
+			MaxImportBytes:       64 << 20, // 64 MiB
 		},
 	}
 }
@@ -442,6 +456,20 @@ func (c Config) Validate() error {
 
 	if !filepath.IsAbs(c.Paths.DataDir) {
 		errs = append(errs, fmt.Errorf("paths.data_dir %q must be absolute", c.Paths.DataDir))
+	}
+
+	// Both ceilings are bounded at the top as well as the bottom. A limit
+	// large enough to be meaningless is the same as no limit at all, and the
+	// point of these two is that something eventually says no.
+	if c.Policy.MaxUploadBytes < 1<<20 || c.Policy.MaxUploadBytes > 64<<30 {
+		errs = append(errs, fmt.Errorf(
+			"policy.max_upload_bytes %d must be between 1 MiB and 64 GiB",
+			c.Policy.MaxUploadBytes))
+	}
+	if c.Policy.MaxImportBytes < 1<<10 || c.Policy.MaxImportBytes > 1<<30 {
+		errs = append(errs, fmt.Errorf(
+			"policy.max_import_bytes %d must be between 1 KiB and 1 GiB",
+			c.Policy.MaxImportBytes))
 	}
 
 	switch c.Log.Level {

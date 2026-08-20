@@ -22,6 +22,14 @@ server:
   idle_timeout: 120s
   shutdown_grace: 30s
 
+  # Networks whose X-Forwarded-For header is believed, so audit records show
+  # the user's address rather than the proxy's. List only the reverse proxy
+  # in front of this server: anything listed here can forge a client IP, so
+  # an empty list is safer than a generous one.
+  trusted_proxy_cidrs:
+    - "127.0.0.1/32"
+    - "::1/128"
+
 database:
   # "postgres" for a shared deployment, "sqlite" for a single user or a lab.
   driver: postgres
@@ -60,12 +68,63 @@ vault:
   # How long an idle unlocked vault stays unlocked. Activity refreshes it.
   unlock_ttl: 12h
 
+  # THE security decision in this file. With single sign-on the server never
+  # sees a password, so there is nothing to derive a vault key from.
+  #
+  #   passphrase      after the Microsoft redirect the user types a vault
+  #                   passphrase once per working day. A stolen database and
+  #                   master key together yield nothing.
+  #   server_managed  single sign-on alone opens everything. Nothing extra to
+  #                   type — and a stolen database plus master key yields
+  #                   every credential in the system.
+  #
+  # server_managed is what most commercial web-SSH products do and is a
+  # defensible trade, but it discards the property this system is built
+  # around. Decide it deliberately; it is logged loudly at startup.
+  sso_unlock_mode: passphrase
+
 auth:
-  access_token_ttl: 15m
-  refresh_token_ttl: 168h
-  require_mfa: false
-  max_login_attempts: 5
+  # A session ends after this long without activity, and unconditionally after
+  # session_absolute_ttl however active it has been. The absolute lifetime is
+  # what bounds a stolen cookie: without it, an attacker who keeps a session
+  # warm keeps it forever.
+  session_idle_ttl: 12h
+  session_absolute_ttl: 720h
+
+  # off | optional | required. "optional" lets people enrol a second factor
+  # without forcing it; require_mfa_for_admins tightens it for the accounts
+  # that can change everyone else's.
+  mfa_policy: optional
+  require_mfa_for_admins: false
+
+  # Sign-in throttling. The per-address limit must be at least the per-account
+  # one, or a single user's retries would lock out everyone behind their
+  # office NAT.
+  max_attempts_per_account: 5
+  max_attempts_per_address: 30
   lockout_window: 15m
+  lockout_duration: 15m
+
+  # Leave this on. Off, the session cookie is sent over plain HTTP, which is
+  # only ever correct behind a TLS-terminating proxy on the same host.
+  secure_cookies: true
+
+  oidc:
+    enabled: false
+    # For Microsoft Entra, the tenant-specific v2.0 issuer:
+    #   https://login.microsoftonline.com/<tenant-id>/v2.0
+    issuer: ""
+    client_id: ""
+    # Leave empty here and set BKD_OIDC_CLIENT_SECRET instead. A secret in
+    # this file is a secret in your configuration management system.
+    client_secret: ""
+    # Required when the issuer is a multi-tenant endpoint, and a good idea
+    # regardless: without it any account in the world can sign in.
+    allowed_tenants: []
+    # Create an account on first successful sign-in. Set false to require
+    # that accounts be provisioned ahead of time.
+    auto_provision: true
+    provider_name: "Microsoft"
 
 paths:
   data_dir: "/var/lib/bkd"
@@ -91,3 +150,10 @@ policy:
   require_host_key_verify: true
 
   record_all_sessions: false
+
+  # The two endpoints that accept a large body. Neither is a limit on what can
+  # be transferred: the file browser splits a large upload into chunks and
+  # resumes each at an offset, so max_upload_bytes bounds one request. A
+  # request over either cap is refused outright rather than truncated.
+  max_upload_bytes: 1073741824   # 1 GiB per upload request
+  max_import_bytes: 67108864     # 64 MiB per imported configuration

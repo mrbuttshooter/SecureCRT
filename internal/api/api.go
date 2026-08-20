@@ -13,6 +13,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
 	"github.com/mrbuttshooter/securecrt/internal/files"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
+	"github.com/mrbuttshooter/securecrt/internal/portability"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
@@ -39,6 +40,33 @@ type Config struct {
 	TrustedProxies []*net.IPNet
 
 	ExternalURL string
+
+	// AllowPlaintextExport gates every export format except the encrypted
+	// bundle. Off by default: an export in the clear takes everything out of
+	// the vault and writes it somewhere nothing is protecting.
+	AllowPlaintextExport bool
+
+	// MaxUploadBytes and MaxImportBytes cap the two endpoints that accept a
+	// large body. Zero means the built-in default, so a caller that has not
+	// heard of these fields still gets a bounded server.
+	MaxUploadBytes int64
+	MaxImportBytes int64
+}
+
+// uploadLimit and importLimit resolve the configured caps, falling back to the
+// defaults when a caller left them unset.
+func (c Config) uploadLimit() int64 {
+	if c.MaxUploadBytes > 0 {
+		return c.MaxUploadBytes
+	}
+	return defaultMaxUploadBytes
+}
+
+func (c Config) importLimit() int64 {
+	if c.MaxImportBytes > 0 {
+		return c.MaxImportBytes
+	}
+	return defaultMaxImportBytes
 }
 
 // API wires the HTTP handlers to the services behind them.
@@ -70,6 +98,10 @@ type API struct {
 	fileSessions *files.Manager
 	transfers    *files.Transfers
 
+	// Import and export, plus the previews waiting to be committed.
+	portability *portability.Service
+	staging     *staging
+
 	// csrfKey signs CSRF tokens. An HKDF subkey of the master key, so the
 	// service needs no additional secret on disk.
 	csrfKey vault.Key
@@ -94,6 +126,7 @@ type Deps struct {
 
 	FileSessions *files.Manager
 	Transfers    *files.Transfers
+	Portability  *portability.Service
 }
 
 // New builds an API.
@@ -125,6 +158,9 @@ func New(cfg Config, deps Deps, log *slog.Logger) (*API, error) {
 
 		fileSessions: deps.FileSessions,
 		transfers:    deps.Transfers,
+
+		portability: deps.Portability,
+		staging:     newStaging(),
 
 		csrfKey: csrfKey,
 	}, nil
@@ -162,6 +198,10 @@ func ConfigFrom(c config.Config) (Config, error) {
 		SSOUnlockMode:       users.SSOUnlockMode(c.Vault.SSOUnlockMode),
 		TrustedProxies:      proxies,
 		ExternalURL:         c.Server.ExternalURL,
+
+		AllowPlaintextExport: c.Policy.AllowPlaintextExport,
+		MaxUploadBytes:       c.Policy.MaxUploadBytes,
+		MaxImportBytes:       c.Policy.MaxImportBytes,
 	}, nil
 }
 
@@ -230,6 +270,9 @@ func (a *API) Routes() http.Handler {
 		"DELETE /api/files/entry",
 		"POST /api/files/copy",
 		"GET /api/files/transfers", "DELETE /api/files/transfers/{id}",
+
+		"GET /api/portability/config", "POST /api/portability/import",
+		"DELETE /api/portability/staged/{id}", "POST /api/portability/export",
 	} {
 		mux.Handle(route, full)
 	}
@@ -247,6 +290,12 @@ func (a *API) Routes() http.Handler {
 		http.HandlerFunc(a.handleDownload), a.withAuth, a.withMFA))
 	mux.Handle("PUT /api/files/content", chain(
 		http.HandlerFunc(a.handleUpload), a.withAuth, a.withMFA))
+
+	// The import preview is a multipart upload rather than JSON, so it is
+	// mounted directly rather than through the JSON dispatcher — behind the
+	// same chain.
+	mux.Handle("POST /api/portability/preview", chain(
+		http.HandlerFunc(a.handlePreviewImport), a.withAuth, a.withMFA))
 
 	// CSRF wraps everything: a state-changing request must carry a valid
 	// token whether or not it is authenticated, so an unauthenticated login
@@ -334,6 +383,15 @@ func (a *API) routeAuthenticated(w http.ResponseWriter, r *http.Request) {
 		a.handleListKnownHosts(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/known-hosts/"):
 		a.handleForgetKnownHost(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/portability/config":
+		a.handlePortabilityConfig(w, r)
+	case r.Method == http.MethodPost && path == "/api/portability/import":
+		a.handleCommitImport(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/portability/staged/"):
+		a.handleDiscardImport(w, r)
+	case r.Method == http.MethodPost && path == "/api/portability/export":
+		a.handleExport(w, r)
 
 	case r.Method == http.MethodGet && path == "/api/files/sessions":
 		a.handleListFileSessions(w, r)
