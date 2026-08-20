@@ -3,6 +3,7 @@ module github.com/mrbuttshooter/securecrt
 go 1.25.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/go-jose/go-jose/v4 v4.1.4
