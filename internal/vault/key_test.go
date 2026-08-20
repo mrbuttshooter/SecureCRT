@@ -6,10 +6,22 @@ import (
 	"testing"
 )
 
+// mustKDF returns deliberately cheap Argon2id parameters. Production costs
+// would make this suite take minutes; they are exercised directly in
+// TestDefaultKDFParamsMatchesRFCGuidance and TestDeriveKEKUsesConfiguredCost.
+func mustKDF(t *testing.T) KDFParams {
+	t.Helper()
+	p, err := NewKDFParams(1, 16*1024, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func TestNewUserKeyRoundTrip(t *testing.T) {
 	pass := []byte("correct horse battery staple")
 
-	dek, wrapped, err := NewUserKey("alice", pass)
+	dek, wrapped, err := NewUserKey("alice", pass, mustKDF(t))
 	if err != nil {
 		t.Fatalf("NewUserKey: %v", err)
 	}
@@ -30,7 +42,7 @@ func TestNewUserKeyRoundTrip(t *testing.T) {
 }
 
 func TestUnwrapWithWrongPassphraseFails(t *testing.T) {
-	_, wrapped, err := NewUserKey("alice", []byte("right passphrase"))
+	_, wrapped, err := NewUserKey("alice", []byte("right passphrase"), mustKDF(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +57,7 @@ func TestUnwrapWithWrongPassphraseFails(t *testing.T) {
 // makes the relocated row undecryptable under Bob's identity.
 func TestUnwrapWithWrongOwnerFails(t *testing.T) {
 	pass := []byte("correct horse battery staple")
-	_, wrapped, err := NewUserKey("alice", pass)
+	_, wrapped, err := NewUserKey("alice", pass, mustKDF(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +69,7 @@ func TestUnwrapWithWrongOwnerFails(t *testing.T) {
 
 func TestUnwrapWithTamperedWrappedKeyFails(t *testing.T) {
 	pass := []byte("correct horse battery staple")
-	_, wrapped, err := NewUserKey("alice", pass)
+	_, wrapped, err := NewUserKey("alice", pass, mustKDF(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,10 +94,11 @@ func TestUnwrapWithTamperedWrappedKeyFails(t *testing.T) {
 		}
 	})
 
+	// Rewriting the recorded costs must not yield a usable key either: an
+	// attacker who could downgrade them would cheapen an offline attack.
 	t.Run("cost downgrade", func(t *testing.T) {
 		w := wrapped
-		w.KDF.Time = 1
-		w.KDF.MemoryKB = 16 * 1024
+		w.KDF.Time = wrapped.KDF.Time + 1
 		if _, err := UnwrapUserKey("alice", pass, w); !errors.Is(err, ErrWrongPassphrase) {
 			t.Fatalf("want ErrWrongPassphrase, got %v", err)
 		}
@@ -99,7 +112,7 @@ func TestRewrapPreservesCredentials(t *testing.T) {
 	oldPass := []byte("the old passphrase")
 	newPass := []byte("the new passphrase")
 
-	dek, _, err := NewUserKey("alice", oldPass)
+	dek, _, err := NewUserKey("alice", oldPass, mustKDF(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +124,7 @@ func TestRewrapPreservesCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rewrapped, err := RewrapUserKey("alice", dek, newPass)
+	rewrapped, err := RewrapUserKey("alice", dek, newPass, mustKDF(t))
 	if err != nil {
 		t.Fatalf("RewrapUserKey: %v", err)
 	}
@@ -138,7 +151,7 @@ func TestRewrapRejectsZeroedKey(t *testing.T) {
 	dek := mustKey(t)
 	dek.Zero()
 
-	if _, err := RewrapUserKey("alice", dek, []byte("new passphrase")); err == nil {
+	if _, err := RewrapUserKey("alice", dek, []byte("new passphrase"), mustKDF(t)); err == nil {
 		t.Fatal("rewrapping an all-zero key must be refused")
 	}
 }
@@ -146,15 +159,15 @@ func TestRewrapRejectsZeroedKey(t *testing.T) {
 // TestTeamKeySharing exercises the shared-credential mechanism: one team DEK,
 // sealed once per member under that member's personal DEK.
 func TestTeamKeySharing(t *testing.T) {
-	aliceDEK, _, err := NewUserKey("alice", []byte("alice passphrase"))
+	aliceDEK, _, err := NewUserKey("alice", []byte("alice passphrase"), mustKDF(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	bobDEK, _, err := NewUserKey("bob", []byte("bob passphrase"))
+	bobDEK, _, err := NewUserKey("bob", []byte("bob passphrase"), mustKDF(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	malloryDEK, _, err := NewUserKey("mallory", []byte("mallory passphrase"))
+	malloryDEK, _, err := NewUserKey("mallory", []byte("mallory passphrase"), mustKDF(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,9 +335,6 @@ func TestKDFParamsValidate(t *testing.T) {
 	if err := good.Validate(); err != nil {
 		t.Fatalf("defaults must validate: %v", err)
 	}
-	if good.MemoryKB != 64*1024 || good.Time != 3 || good.Threads != 4 {
-		t.Fatalf("defaults drifted from RFC 9106 guidance: %+v", good)
-	}
 
 	for name, p := range map[string]KDFParams{
 		"zero time":   {Time: 0, MemoryKB: 64 * 1024, Threads: 4, Salt: good.Salt},
@@ -363,7 +373,7 @@ func TestSurvivesRestart(t *testing.T) {
 	secret := []byte("-----BEGIN OPENSSH PRIVATE KEY-----")
 	aad := CredentialAAD("alice", "cred-1", "private_key")
 
-	dek, wrapped, err := NewUserKey("alice", pass)
+	dek, wrapped, err := NewUserKey("alice", pass, mustKDF(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,5 +399,117 @@ func TestSurvivesRestart(t *testing.T) {
 	}
 	if !bytes.Equal(got, secret) {
 		t.Fatalf("plaintext changed across restart: %q", got)
+	}
+}
+
+func TestDefaultKDFParamsMatchesRFCGuidance(t *testing.T) {
+	p, err := DefaultKDFParams()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Time != 3 || p.MemoryKB != 64*1024 || p.Threads != 4 {
+		t.Fatalf("defaults drifted from the RFC 9106 second recommended option: %+v", p)
+	}
+	if len(p.Salt) != SaltLen {
+		t.Fatalf("salt is %d bytes, want %d", len(p.Salt), SaltLen)
+	}
+}
+
+// TestNewKDFParamsHonoursCallerCosts is the regression test for a real gap:
+// the Argon2id costs in config.yaml were validated but never reached the KDF,
+// so an operator raising them was silently ignored.
+func TestNewKDFParamsHonoursCallerCosts(t *testing.T) {
+	p, err := NewKDFParams(5, 128*1024, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Time != 5 || p.MemoryKB != 128*1024 || p.Threads != 2 {
+		t.Fatalf("caller costs were not applied: %+v", p)
+	}
+}
+
+func TestNewKDFParamsRejectsWeakCosts(t *testing.T) {
+	for name, args := range map[string][3]uint32{
+		"zero time":    {0, 64 * 1024, 4},
+		"low memory":   {3, 8 * 1024, 4},
+		"zero threads": {3, 64 * 1024, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			//nolint:gosec // fixed small test values
+			if _, err := NewKDFParams(args[0], args[1], uint8(args[2])); err == nil {
+				t.Fatal("weak costs must be refused rather than silently accepted")
+			}
+		})
+	}
+}
+
+func TestNewKDFParamsSaltsAreUnique(t *testing.T) {
+	seen := make(map[string]struct{}, 200)
+	for i := 0; i < 200; i++ {
+		p, err := NewKDFParams(1, 16*1024, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, dup := seen[string(p.Salt)]; dup {
+			t.Fatalf("salt repeated after %d calls", i)
+		}
+		seen[string(p.Salt)] = struct{}{}
+	}
+}
+
+// TestRewrapUpgradesCosts covers rolling out a cost increase: the DEK survives
+// so credentials keep decrypting, but the wrapped key now carries the new
+// parameters.
+func TestRewrapUpgradesCosts(t *testing.T) {
+	pass := []byte("correct horse battery staple")
+	weak, err := NewKDFParams(1, 16*1024, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dek, wrapped, err := NewUserKey("alice", pass, weak)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aad := CredentialAAD("alice", "cred-1", "private_key")
+	env, err := Seal(dek, aad, []byte("secret material"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stronger, err := NewKDFParams(2, 32*1024, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := RewrapUserKey("alice", dek, pass, stronger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if upgraded.KDF.Time != 2 || upgraded.KDF.MemoryKB != 32*1024 {
+		t.Fatalf("rewrap did not record the new costs: %+v", upgraded.KDF)
+	}
+	if string(upgraded.KDF.Salt) == string(wrapped.KDF.Salt) {
+		t.Fatal("rewrap must draw a fresh salt")
+	}
+
+	recovered, err := UnwrapUserKey("alice", pass, upgraded)
+	if err != nil {
+		t.Fatalf("same passphrase must still unlock after a cost upgrade: %v", err)
+	}
+	got, err := Open(recovered, aad, env)
+	if err != nil {
+		t.Fatalf("credentials must survive a cost upgrade: %v", err)
+	}
+	if string(got) != "secret material" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestNewUserKeyRejectsInvalidParams(t *testing.T) {
+	bad := KDFParams{Time: 0, MemoryKB: 1, Threads: 0, Salt: []byte("x")}
+	if _, _, err := NewUserKey("alice", []byte("pass"), bad); err == nil {
+		t.Fatal("invalid params must be refused")
 	}
 }

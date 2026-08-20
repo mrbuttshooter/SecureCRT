@@ -183,13 +183,15 @@ func wrapAAD(ownerID string) AAD {
 }
 
 // NewUserKey creates a fresh DEK for a user and wraps it under a KEK derived
-// from their vault passphrase.
+// from their vault passphrase, using the caller's Argon2id costs.
 //
 // It returns both the plaintext DEK — which the caller should install in the
 // session cache and eventually Zero — and the wrapped form to persist.
-func NewUserKey(ownerID string, passphrase []byte) (Key, WrappedKey, error) {
-	params, err := DefaultKDFParams()
-	if err != nil {
+//
+// Pass DefaultKDFParams() for the built-in costs; callers that honour operator
+// configuration should pass NewKDFParams(cfg.Argon2Time, ...) instead.
+func NewUserKey(ownerID string, passphrase []byte, params KDFParams) (Key, WrappedKey, error) {
+	if err := params.Validate(); err != nil {
 		return nil, WrappedKey{}, err
 	}
 
@@ -238,12 +240,14 @@ func UnwrapUserKey(ownerID string, passphrase []byte, wk WrappedKey) (Key, error
 // of the user's credentials need re-encrypting. Only the small wrapped-key
 // record is rewritten, which keeps the operation atomic and fast even for a
 // user with thousands of saved sessions.
-func RewrapUserKey(ownerID string, dek Key, newPassphrase []byte) (WrappedKey, error) {
+//
+// It is also how a cost increase is rolled out: rewrapping with higher params
+// upgrades that user's vault without touching their credentials.
+func RewrapUserKey(ownerID string, dek Key, newPassphrase []byte, params KDFParams) (WrappedKey, error) {
 	if err := dek.validate(); err != nil {
 		return WrappedKey{}, err
 	}
-	params, err := DefaultKDFParams()
-	if err != nil {
+	if err := params.Validate(); err != nil {
 		return WrappedKey{}, err
 	}
 

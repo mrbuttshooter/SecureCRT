@@ -289,7 +289,7 @@ func TestCacheEndToEnd(t *testing.T) {
 	aad := CredentialAAD("alice", "cred-1", "private_key")
 
 	// Registration.
-	dek, wrapped, err := NewUserKey("alice", pass)
+	dek, wrapped, err := NewUserKey("alice", pass, mustKDF(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,9 +16,20 @@ build:
 web:
 	cd web && pnpm install --frozen-lockfile && pnpm build
 
-## test: unit tests
+## test: unit tests on both database backends
+##
+## The two drivers differ in placeholder syntax, type affinity and foreign key
+## enforcement, so a suite that only runs one of them misses real bugs.
+## BKD_TEST_POSTGRES_DSN selects the backend; unset means SQLite.
 test:
-	$(GO) test ./... -count=1
+	@echo "--- sqlite ---"
+	@BKD_TEST_POSTGRES_DSN= $(GO) test ./... -count=1
+	@if [ -n "$$BKD_TEST_POSTGRES_DSN" ]; then \
+		echo "--- postgres ---"; \
+		$(GO) test ./... -count=1; \
+	else \
+		echo "--- postgres: skipped (set BKD_TEST_POSTGRES_DSN to enable) ---"; \
+	fi
 
 ## test-race: unit tests under the race detector
 test-race:

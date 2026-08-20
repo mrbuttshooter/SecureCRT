@@ -58,10 +58,16 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
-      - name: Test
+      # Both backends, every push. They differ in placeholder syntax, type
+      # affinity and foreign key enforcement, so running only one hides real
+      # bugs until production.
+      - name: Test (SQLite)
+        run: go test ./... -count=1 -coverprofile=coverage.out
+
+      - name: Test (PostgreSQL)
         env:
           BKD_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/bkdtest?sslmode=disable
-        run: go test ./... -count=1 -coverprofile=coverage.out
+        run: go test ./... -count=1
 
       # The vault holds every credential in the system, so its concurrency is
       # verified separately rather than relying on the default run.

@@ -38,12 +38,14 @@ package vault
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
 
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/hkdf"
 )
 
 // KeyLen is the size in bytes of every symmetric key in this package
@@ -151,14 +153,36 @@ type KDFParams struct {
 	Salt     []byte `json:"salt"`
 }
 
+// Default Argon2id costs, following the RFC 9106 second recommended option.
+// Operators may raise them in configuration; see NewKDFParams.
+const (
+	DefaultKDFTime     uint32 = 3
+	DefaultKDFMemoryKB uint32 = 64 * 1024
+	DefaultKDFThreads  uint8  = 4
+)
+
 // DefaultKDFParams returns interactive-grade Argon2id parameters with a fresh
-// salt. 64 MiB / t=3 / p=4 follows the RFC 9106 second recommended option.
+// salt.
 func DefaultKDFParams() (KDFParams, error) {
+	return NewKDFParams(DefaultKDFTime, DefaultKDFMemoryKB, DefaultKDFThreads)
+}
+
+// NewKDFParams returns the given Argon2id costs with a fresh random salt.
+//
+// This is how an operator's configured costs reach the KDF. Costs are recorded
+// alongside each wrapped key rather than read from configuration at unwrap
+// time, so raising them affects new and re-keyed vaults while existing ones
+// keep working with the parameters they were created under.
+func NewKDFParams(time uint32, memoryKB uint32, threads uint8) (KDFParams, error) {
 	salt, err := NewSalt()
 	if err != nil {
 		return KDFParams{}, err
 	}
-	return KDFParams{Time: 3, MemoryKB: 64 * 1024, Threads: 4, Salt: salt}, nil
+	p := KDFParams{Time: time, MemoryKB: memoryKB, Threads: threads, Salt: salt}
+	if err := p.Validate(); err != nil {
+		return KDFParams{}, err
+	}
+	return p, nil
 }
 
 // Validate rejects cost parameters too weak to resist offline cracking.
@@ -190,3 +214,52 @@ func DeriveKEK(passphrase []byte, p KDFParams) (Key, error) {
 	k := argon2.IDKey(passphrase, p.Salt, p.Time, p.MemoryKB, p.Threads, KeyLen)
 	return Key(k), nil
 }
+
+// DeriveSubkey derives an independent 32-byte key from a master key for a
+// named purpose, using HKDF-SHA256.
+//
+// This exists so the service needs exactly one secret on disk. Signing OIDC
+// state cookies and CSRF tokens both need a key, and adding a separate secret
+// file for each would be one more thing for an operator to generate, protect,
+// rotate and back up — and one more thing to get wrong.
+//
+// Each purpose gets a cryptographically independent key: recovering the CSRF
+// subkey tells an attacker nothing about the OIDC subkey or about the master
+// key itself. The info string is what separates them, so it must be distinct
+// and stable per purpose — changing it invalidates everything signed under the
+// old value.
+//
+// The master key is never used directly for signing, only as HKDF input.
+func DeriveSubkey(master Key, info string) (Key, error) {
+	if err := master.validate(); err != nil {
+		return nil, fmt.Errorf("vault: derive subkey: %w", err)
+	}
+	if info == "" {
+		return nil, errors.New("vault: subkey info must not be empty")
+	}
+
+	// The salt is a fixed domain-separation constant rather than a random
+	// value: HKDF's salt need not be secret or random, and a stable one keeps
+	// derivation reproducible across restarts without storing anything extra.
+	r := hkdf.New(sha256.New, master, []byte("bkd/subkey/v1"), []byte(info))
+
+	sub := make(Key, KeyLen)
+	if _, err := io.ReadFull(r, sub); err != nil {
+		return nil, fmt.Errorf("vault: derive subkey %q: %w", info, err)
+	}
+	return sub, nil
+}
+
+// Subkey purposes. Each is a stable string; changing one invalidates every
+// value previously signed or encrypted under it.
+const (
+	// SubkeyOIDCState signs the short-lived cookie carrying the OIDC state,
+	// nonce and PKCE verifier through the Entra redirect.
+	SubkeyOIDCState = "oidc-state-cookie"
+
+	// SubkeyCSRF signs double-submit CSRF tokens.
+	SubkeyCSRF = "csrf-token"
+
+	// SubkeySessionID derives the lookup hash for opaque session tokens.
+	SubkeySessionID = "session-token-hash"
+)

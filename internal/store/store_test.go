@@ -106,6 +106,7 @@ func TestMigrateCreatesSchema(t *testing.T) {
 		for _, table := range []string{
 			"users", "teams", "team_members", "credentials",
 			"folders", "sessions", "known_hosts", "auth_sessions", "audit_events",
+			"mfa_totp", "mfa_recovery_codes", "webauthn_credentials", "login_attempts",
 		} {
 			var n int
 			q := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, table) // #nosec G201 -- fixed list
@@ -164,7 +165,10 @@ func TestMigrateDetectsEditedMigration(t *testing.T) {
 	})
 }
 
-func TestRollback(t *testing.T) {
+// TestRollbackIsSingleStep confirms Rollback reverts exactly one migration,
+// not everything above some floor. An operator undoing a bad deploy must be
+// able to step back one version at a time.
+func TestRollbackIsSingleStep(t *testing.T) {
 	eachBackend(t, func(t *testing.T, db *DB) {
 		ctx := context.Background()
 
@@ -174,6 +178,9 @@ func TestRollback(t *testing.T) {
 		before, err := CurrentVersion(ctx, db)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if before < 2 {
+			t.Skip("needs at least two migrations to be meaningful")
 		}
 
 		if err := Rollback(ctx, db, quietLogger()); err != nil {
@@ -185,21 +192,71 @@ func TestRollback(t *testing.T) {
 			t.Fatal(err)
 		}
 		if after != before-1 {
-			t.Fatalf("version = %d after rollback, want %d", after, before-1)
+			t.Fatalf("version = %d after one rollback, want %d", after, before-1)
 		}
 
-		// The tables must be gone.
+		// The earlier migration's tables must still be there.
+		var n int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+			t.Fatalf("a single-step rollback removed more than one migration: %v", err)
+		}
+	})
+}
+
+// TestRollbackAllThenRemigrate walks the schema all the way down and back up.
+// This is what catches a down migration that does not actually undo its up:
+// the second Migrate would fail, or leave a different schema behind.
+func TestRollbackAllThenRemigrate(t *testing.T) {
+	eachBackend(t, func(t *testing.T, db *DB) {
+		ctx := context.Background()
+
+		if err := Migrate(ctx, db, quietLogger()); err != nil {
+			t.Fatal(err)
+		}
+		top, err := CurrentVersion(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for i := top; i > 0; i-- {
+			if err := Rollback(ctx, db, quietLogger()); err != nil {
+				t.Fatalf("rolling back version %d: %v", i, err)
+			}
+		}
+
+		v, err := CurrentVersion(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v != 0 {
+			t.Fatalf("version = %d after rolling everything back, want 0", v)
+		}
+
 		var n int
 		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err == nil {
-			t.Fatal("users table survived the rollback")
+			t.Fatal("users table survived a full rollback")
 		}
 
-		// And re-applying must restore them.
+		// Everything must come back cleanly.
 		if err := Migrate(ctx, db, quietLogger()); err != nil {
-			t.Fatalf("re-migrate: %v", err)
+			t.Fatalf("re-migrate after a full rollback: %v", err)
 		}
-		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
-			t.Fatalf("users table not restored: %v", err)
+		for _, table := range []string{
+			"users", "teams", "credentials", "sessions", "auth_sessions",
+			"mfa_totp", "mfa_recovery_codes", "webauthn_credentials", "login_attempts",
+		} {
+			q := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, table) // #nosec G201 -- fixed list
+			if err := db.QueryRow(ctx, q).Scan(&n); err != nil {
+				t.Errorf("table %s was not restored: %v", table, err)
+			}
+		}
+
+		restored, err := CurrentVersion(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if restored != top {
+			t.Fatalf("version = %d after re-migrating, want %d", restored, top)
 		}
 	})
 }
