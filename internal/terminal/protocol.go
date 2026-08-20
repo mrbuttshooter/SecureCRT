@@ -68,6 +68,10 @@ const (
 	// not there.
 	ControlWarning ControlType = "warning"
 
+	// ControlTrigger reports one of the user's rules firing. Carries what it
+	// saw and never what it sent — a send may contain a password.
+	ControlTrigger ControlType = "trigger"
+
 	// ControlClosed reports that the remote session ended.
 	ControlClosed ControlType = "closed"
 
@@ -118,6 +122,9 @@ type Control struct {
 
 	// ExitStatus is the remote command's exit code, when it reported one.
 	ExitStatus *int `json:"exit_status,omitempty"`
+
+	// Trigger carries a rule that fired, for ControlTrigger.
+	Trigger *TriggerEvent `json:"trigger,omitempty"`
 }
 
 // Error codes carried by ControlError.

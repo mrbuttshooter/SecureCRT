@@ -138,53 +138,80 @@ func (s LogonStep) Matches(recent string) bool {
 	return false
 }
 
-// ExpandSend resolves the escapes in a step and then substitutes the values.
+// ExpandSend fills in a template's placeholders and escapes.
 //
-// The order is the security property, not a detail. Escapes belong to the
-// template, which the user wrote; the username and password are data, which
-// may have come from a device inventory or a colleague's export. Substituting
-// first and unescaping afterwards would let a password containing the two
-// characters \ and r become a carriage return — and a password chosen to
-// contain \r followed by a command would type that command into the device,
-// as the user, at whatever privilege the login just granted.
-//
-// So: unescape the template, then put the values in verbatim.
+// See Expand. This is the case with no capture groups.
 func ExpandSend(send, username, password string) string {
-	template := unescape(send)
-	out := strings.ReplaceAll(template, PlaceholderUsername, username)
-	return strings.ReplaceAll(out, PlaceholderPassword, password)
+	return Expand(send, username, password, nil)
 }
 
-// unescape resolves \r, \n, \t and \\ in a template.
-func unescape(in string) string {
-	if !strings.ContainsRune(in, '\\') {
-		return in
+// Expand resolves a send template in a single pass.
+//
+// One pass is the security property, and it is worth being precise about why.
+// A template contains three kinds of thing: escapes the user wrote, named
+// placeholders standing for credentials, and — for a trigger — $1..$9
+// standing for whatever the *device* printed. The first is trusted, the
+// second is a secret, and the third is arbitrary bytes chosen by whatever is
+// at the other end of the wire.
+//
+// Any "substitute, then scan again" arrangement lets something inserted by an
+// earlier step be interpreted by a later one. Resolve escapes after
+// substitution and a password containing the two characters \ and r becomes
+// a carriage return, so a password chosen to hold \r followed by a command
+// types that command at whatever privilege the login just granted. Expand
+// captures before the escapes and a device gets the same primitive for free,
+// by printing it.
+//
+// So this walks the template once and appends every substituted value
+// verbatim. Nothing that goes in is ever looked at again.
+func Expand(send, username, password string, captures []string) string {
+	var b strings.Builder
+	b.Grow(len(send))
+
+	for i := 0; i < len(send); {
+		switch {
+		case send[i] == '\\' && i+1 < len(send):
+			i++
+			switch send[i] {
+			case 'r':
+				b.WriteByte('\r')
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			case '\\':
+				b.WriteByte('\\')
+			default:
+				// An escape nobody defined is left as written, so a Windows
+				// path in a step does not quietly lose characters.
+				b.WriteByte('\\')
+				b.WriteByte(send[i])
+			}
+			i++
+
+		case strings.HasPrefix(send[i:], PlaceholderUsername):
+			b.WriteString(username)
+			i += len(PlaceholderUsername)
+
+		case strings.HasPrefix(send[i:], PlaceholderPassword):
+			b.WriteString(password)
+			i += len(PlaceholderPassword)
+
+		case send[i] == '$' && i+1 < len(send) && send[i+1] >= '1' && send[i+1] <= '9':
+			// A capture group holds whatever the device printed. Written
+			// verbatim and never re-examined, which is the whole point.
+			index := int(send[i+1] - '0')
+			if index < len(captures) {
+				b.WriteString(captures[index])
+			}
+			i += 2
+
+		default:
+			b.WriteByte(send[i])
+			i++
+		}
 	}
 
-	var b strings.Builder
-	b.Grow(len(in))
-	for i := 0; i < len(in); i++ {
-		if in[i] != '\\' || i+1 >= len(in) {
-			b.WriteByte(in[i])
-			continue
-		}
-		i++
-		switch in[i] {
-		case 'r':
-			b.WriteByte('\r')
-		case 'n':
-			b.WriteByte('\n')
-		case 't':
-			b.WriteByte('\t')
-		case '\\':
-			b.WriteByte('\\')
-		default:
-			// An escape nobody defined is left as it was written, so a
-			// Windows path in a step does not quietly lose characters.
-			b.WriteByte('\\')
-			b.WriteByte(in[i])
-		}
-	}
 	return b.String()
 }
 

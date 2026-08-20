@@ -122,6 +122,10 @@ func (a *API) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
 		return
 	}
+	if err := checkTriggers(req.Defaults); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
 
 	var defaults sessions.Settings
 	if req.Defaults != nil {
@@ -167,6 +171,10 @@ func (a *API) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := checkLogonSteps(req.Defaults); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
+	if err := checkTriggers(req.Defaults); err != nil {
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
 		return
 	}
@@ -265,6 +273,10 @@ func (a *API) handleCreateSavedSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
 		return
 	}
+	if err := checkTriggers(req.Settings); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
 
 	var settings sessions.Settings
 	if req.Settings != nil {
@@ -330,6 +342,10 @@ func (a *API) handleUpdateSavedSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := checkLogonSteps(req.Settings); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
+	if err := checkTriggers(req.Settings); err != nil {
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
 		return
 	}
@@ -543,6 +559,19 @@ func checkLogonSteps(settings *sessions.Settings) error {
 		return nil
 	}
 	return sessions.ValidateLogonSteps(*settings.LogonSteps)
+}
+
+// checkTriggers validates the watch rules at write time.
+//
+// The patterns are compiled here, so one that does not parse is refused while
+// somebody is looking at the form rather than silently never matching on a
+// device three weeks later — which is the failure mode of every rule engine
+// that validates lazily.
+func checkTriggers(settings *sessions.Settings) error {
+	if settings == nil || settings.Triggers == nil {
+		return nil
+	}
+	return sessions.ValidateTriggers(*settings.Triggers)
 }
 
 // checkAgentKeys validates the agent-forwarding setting at write time.

@@ -106,6 +106,10 @@ type ConnectParams struct {
 	// Progress reports what is happening, so the user sees something other
 	// than a blank rectangle while a slow host is dialled.
 	Progress func(status string)
+
+	// OnTrigger receives a rule firing. Called from the read path, so it
+	// must not block.
+	OnTrigger TriggerSink
 }
 
 // Connect opens a terminal for a saved connection.
@@ -187,7 +191,24 @@ func (c *Connector) connectSSH(ctx context.Context, p ConnectParams) (*Terminal,
 		}
 	}
 
-	term, err := c.manager.Open(WithTranscript(shell, transcript), conn.Release, OpenParams{
+	// The credential is fetched for the triggers rather than for the dial —
+	// SSH already authenticated with it — because a rule that answers an
+	// enable prompt needs the same secret and should not be made to store a
+	// second copy of it.
+	logon, err := c.dialer.LogonFor(ctx, remote.Params{
+		UserID: p.UserID, SessionID: conn.Resolved.ID, VaultKey: p.VaultKey,
+	}, conn.Resolved)
+	if err != nil {
+		// Not fatal: the session works, and a trigger that cannot fill in a
+		// password is better than a terminal that will not open.
+		c.log.Warn("reading the credential for triggers", "error", err)
+	}
+
+	triggers := conn.Resolved.Settings.EffectiveTriggers()
+	watched := WithTriggers(WithTranscript(shell, transcript),
+		triggers, logon.Username, logon.Password, p.OnTrigger)
+
+	term, err := c.manager.Open(watched, conn.Release, OpenParams{
 		UserID:    p.UserID,
 		SessionID: conn.Resolved.ID,
 		Label:     conn.Resolved.Name,
@@ -197,6 +218,7 @@ func (c *Connector) connectSSH(ctx context.Context, p ConnectParams) (*Terminal,
 		AgentKeys: conn.AgentKeys,
 
 		AgentRefused: shell.AgentRefused() != nil,
+		Triggers:     len(triggers),
 		Transcript:   transcript,
 		Recorded:     transcript != nil,
 		RecordForced: forced,
@@ -295,7 +317,10 @@ func (c *Connector) connectTelnet(
 	// exchange, which is exactly the part somebody reviewing a session wants
 	// to see happened.
 	steps := resolved.Settings.EffectiveLogonSteps(logon.Password != "")
-	shell := WithTranscript(WithLogon(conn, steps, logon.Username, logon.Password), transcript)
+	triggers := resolved.Settings.EffectiveTriggers()
+	shell := WithTriggers(
+		WithTranscript(WithLogon(conn, steps, logon.Username, logon.Password), transcript),
+		triggers, logon.Username, logon.Password, p.OnTrigger)
 
 	term, err := c.manager.Open(shell, nil, OpenParams{
 		UserID:       p.UserID,
@@ -305,6 +330,7 @@ func (c *Connector) connectTelnet(
 		Cols:         cols,
 		Rows:         rows,
 		LogonSteps:   len(steps),
+		Triggers:     len(triggers),
 		Transcript:   transcript,
 		Recorded:     transcript != nil,
 		RecordForced: forced,
@@ -406,7 +432,10 @@ func (c *Connector) connectSerial(
 	}
 
 	steps := resolved.Settings.EffectiveLogonSteps(logon.Password != "")
-	shell := WithTranscript(WithLogon(port, steps, logon.Username, logon.Password), transcript)
+	triggers := resolved.Settings.EffectiveTriggers()
+	shell := WithTriggers(
+		WithTranscript(WithLogon(port, steps, logon.Username, logon.Password), transcript),
+		triggers, logon.Username, logon.Password, p.OnTrigger)
 
 	term, err := c.manager.Open(shell, release, OpenParams{
 		UserID:       p.UserID,
@@ -416,6 +445,7 @@ func (c *Connector) connectSerial(
 		Cols:         p.Cols,
 		Rows:         p.Rows,
 		LogonSteps:   len(steps),
+		Triggers:     len(triggers),
 		Transcript:   transcript,
 		Recorded:     transcript != nil,
 		RecordForced: forced,

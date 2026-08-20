@@ -10,7 +10,9 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/mrbuttshooter/securecrt/internal/audit"
+	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
+	"github.com/mrbuttshooter/securecrt/internal/users"
 )
 
 // hostKeyPromptTimeout bounds how long a connection waits for someone to
@@ -95,6 +97,11 @@ func (a *API) handleTerminalSocket(w http.ResponseWriter, r *http.Request) {
 
 	var term *terminal.Terminal
 
+	// Buffered, and dropped when full: a rule firing is a notice, and a
+	// notice that stalls the session it is about would be worse than a
+	// notice nobody sees.
+	triggerEvents := make(chan terminal.TriggerEvent, 32)
+
 	switch {
 	case query.Get("terminal") != "":
 		term, err = a.terminals.Get(u.ID, query.Get("terminal"))
@@ -105,7 +112,8 @@ func (a *API) handleTerminalSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case query.Get("session") != "":
-		term, err = a.openTerminal(ctx, conn, u.ID, sess.ID, query.Get("session"), cols, rows, r)
+		term, err = a.openTerminal(ctx, conn, u.ID, sess.ID, query.Get("session"),
+			cols, rows, r, triggerEvents)
 		if err != nil {
 			return // openTerminal has already reported it
 		}
@@ -116,9 +124,67 @@ func (a *API) handleTerminalSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Trigger events are relayed on their own goroutine so the bridge's own
+	// loop is untouched — it is the thing carrying the terminal, and a rule
+	// firing must not get in its way.
+	relay, stopRelay := context.WithCancel(ctx)
+	defer stopRelay()
+	go a.relayTriggers(relay, conn, term, u, r, triggerEvents)
+
 	bridge := terminal.NewBridge(conn, term, a.log)
 	if err := bridge.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		a.log.Debug("terminal bridge ended", "terminal", term.ID, "error", err)
+	}
+}
+
+// relayTriggers forwards rule firings to the browser and to the audit log.
+//
+// Both, and for different readers. The browser gets it because a trigger
+// nobody sees fire is indistinguishable from one that never fired; the audit
+// log gets it because a rule that types at a production device on somebody's
+// behalf is an action taken, and an action taken has to be recorded.
+//
+// What is recorded is the rule's name and the line that matched. Never what
+// was sent: a send may hold a password.
+func (a *API) relayTriggers(
+	ctx context.Context,
+	conn *websocket.Conn,
+	term *terminal.Terminal,
+	u users.User,
+	r *http.Request,
+	events <-chan terminal.TriggerEvent,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+
+			writeControl(ctx, conn, a, terminal.Control{
+				Type: terminal.ControlTrigger, Trigger: &event,
+			})
+
+			// A send or a stop changed something at the far end. A notify
+			// and a highlight did not, and recording every one of those
+			// would bury the two that matter.
+			if event.Action != sessions.TriggerSend && event.Action != sessions.TriggerStop {
+				continue
+			}
+			a.audit.Record(ctx, audit.Event{
+				ActorID: u.ID, ActorEmail: u.Email, IPAddress: a.clientIP(r),
+				Action: audit.ActionTriggerFired, TargetType: "session",
+				TargetID: term.SessionID, TargetLabel: term.Label,
+				Detail: map[string]any{
+					"trigger":     event.Name,
+					"trigger_did": string(event.Action),
+					"matched":     event.Line,
+					"terminal_id": term.ID,
+				},
+			})
+		}
 	}
 }
 
@@ -130,6 +196,7 @@ func (a *API) openTerminal(
 	userID, sessionID, savedSessionID string,
 	cols, rows int,
 	r *http.Request,
+	triggerEvents chan<- terminal.TriggerEvent,
 ) (*terminal.Terminal, error) {
 	u, _ := UserFrom(ctx)
 
@@ -153,6 +220,15 @@ func (a *API) openTerminal(
 			writeControl(ctx, conn, a, terminal.Control{
 				Type: terminal.ControlStatus, Status: status,
 			})
+		},
+		// Queued rather than written inline: this is called from the read
+		// path, and a slow socket must not stall the terminal it is
+		// reporting on.
+		OnTrigger: func(event terminal.TriggerEvent) {
+			select {
+			case triggerEvents <- event:
+			default:
+			}
 		},
 	})
 	if connectErr != nil {

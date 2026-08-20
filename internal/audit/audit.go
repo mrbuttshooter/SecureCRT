@@ -98,6 +98,11 @@ const (
 	// rather than merely true.
 	ActionSessionRecorded Action = "session.recorded"
 
+	// ActionTriggerFired records a rule acting on a session — typing at a
+	// device, or ending the connection. Not the ones that merely report:
+	// recording every notice would bury the two that changed something.
+	ActionTriggerFired Action = "trigger.fired"
+
 	// Files. Reads and writes against a managed host are recorded because
 	// "who took a copy of the running configuration, and when" is the first
 	// question asked after an incident.

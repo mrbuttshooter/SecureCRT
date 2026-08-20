@@ -77,6 +77,9 @@ type Terminal struct {
 	Recorded     bool
 	RecordForced bool
 
+	// Triggers is how many rules are watching, for the record.
+	Triggers int
+
 	transcript *Transcript
 
 	shell Shell
@@ -258,6 +261,9 @@ type OpenParams struct {
 	LogonSteps int
 
 	// Recorded reports that this session's output is being written to disk,
+	// Triggers is how many rules are watching this session.
+	Triggers int
+
 	// Transcript is the open recording, when there is one.
 	Transcript *Transcript
 
@@ -311,6 +317,7 @@ func (m *Manager) Open(shell Shell, release func(), p OpenParams) (*Terminal, er
 		AgentKeys:    p.AgentKeys,
 		AgentRefused: p.AgentRefused,
 		LogonSteps:   p.LogonSteps,
+		Triggers:     p.Triggers,
 		Recorded:     p.Recorded,
 		RecordForced: p.RecordForced,
 		transcript:   p.Transcript,

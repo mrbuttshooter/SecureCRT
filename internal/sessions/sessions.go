@@ -139,6 +139,25 @@ type Settings struct {
 	SerialStopBits *int    `json:"serial_stop_bits,omitempty"`
 	SerialParity   *string `json:"serial_parity,omitempty"`
 	SerialFlow     *string `json:"serial_flow,omitempty"`
+
+	// Triggers watch the output and act on it. Inherited, like the logon
+	// sequence and for the same reason: "tell me when any of these three
+	// hundred switches logs a link flap" is one rule on one folder.
+	Triggers *[]Trigger `json:"triggers,omitempty"`
+}
+
+// EffectiveTriggers is the rules to run, with the disabled ones removed.
+func (s Settings) EffectiveTriggers() []Trigger {
+	if s.Triggers == nil {
+		return nil
+	}
+	out := make([]Trigger, 0, len(*s.Triggers))
+	for _, trigger := range *s.Triggers {
+		if !trigger.Disabled {
+			out = append(out, trigger)
+		}
+	}
+	return out
 }
 
 // EffectiveLogonSteps is the sequence to run, or the default.
@@ -217,6 +236,9 @@ func (s Settings) merge(parent Settings) Settings {
 	}
 	if out.SerialFlow == nil {
 		out.SerialFlow = parent.SerialFlow
+	}
+	if out.Triggers == nil {
+		out.Triggers = parent.Triggers
 	}
 
 	// AgentForwardCredentials is absent from this list deliberately, and the
