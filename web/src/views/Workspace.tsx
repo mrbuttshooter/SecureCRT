@@ -377,6 +377,7 @@ export function Workspace({ active }: { active: boolean }) {
                 fontSize={prefs.fontSize}
                 scrollback={prefs.scrollback}
                 active={tab.key === activeKey}
+                otherTerminals={live}
                 onTerminalID={(id) => {
                   setTabs((prev) =>
                     prev.map((t) => (t.key === tab.key ? { ...t, terminalId: id } : t)))

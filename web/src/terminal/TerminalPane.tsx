@@ -5,10 +5,13 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { TerminalSocket, type HostKeyInfo, type LinkState } from './socket'
+import type { LiveTerminal } from '../api'
+import { TerminalSocket, type HostKeyInfo, type LinkState, type TriggerEvent } from './socket'
 import { HostKeyDialog } from './HostKeyDialog'
+import { BroadcastMenu, SnippetMenu } from './SessionTools'
+import { Highlighter } from './highlight'
 import { THEMES, type ThemeName } from './themes'
-import { registerTerminal, unregisterTerminal } from './screen'
+import { registerHighlighter, registerTerminal, unregisterTerminal } from './screen'
 
 export interface TerminalPaneProps {
   /** Stable key for this pane, unique among the open tabs. */
@@ -23,9 +26,29 @@ export interface TerminalPaneProps {
   scrollback: number
   /** Focus this pane when it becomes the active tab. */
   active: boolean
+
+  /**
+   * The user's other live terminals, for the broadcast group.
+   *
+   * Passed in rather than fetched here: the workspace already polls for them
+   * to show what survived a reload, and a second poll per open pane would be
+   * one request per tab per refresh for the same answer.
+   */
+  otherTerminals: LiveTerminal[]
+
   onTerminalID: (id: string) => void
   onEnded: (reason: string) => void
 }
+
+/** A notice on the pane: a rule fired, a warning, a snippet went out. */
+interface Notice {
+  id: number
+  kind: 'trigger' | 'warning' | 'info'
+  text: string
+}
+
+/** How many notices are kept before the oldest is dropped. */
+const MAX_NOTICES = 6
 
 /**
  * TerminalPane is one live terminal: an xterm.js instance bound to a socket.
@@ -50,6 +73,25 @@ export function TerminalPane(props: TerminalPaneProps) {
   const [finding, setFinding] = useState('')
   const [showSearch, setShowSearch] = useState(false)
 
+  const [notices, setNotices] = useState<Notice[]>([])
+  const [recorded, setRecorded] = useState(false)
+  const [terminalId, setTerminalId] = useState(props.terminalId ?? '')
+  const [group, setGroup] = useState<string[]>([])
+  const [menu, setMenu] = useState<'none' | 'snippets' | 'broadcast'>('none')
+
+  const nextNotice = useRef(0)
+
+  // Safe for the mount-once effect below to capture: it touches only a ref
+  // and a functional setState, both of which are stable, so the copy taken on
+  // the first render stays correct for the life of the pane.
+  const say = (kind: Notice['kind'], text: string) => {
+    if (!text) return
+    setNotices((prev) => {
+      const next = [...prev, { id: nextNotice.current++, kind, text }]
+      return next.length > MAX_NOTICES ? next.slice(next.length - MAX_NOTICES) : next
+    })
+  }
+
   // Callbacks change on every render; the effect below must not tear the
   // terminal down when they do, so it reads them through a ref.
   const callbacks = useRef(props)
@@ -72,6 +114,11 @@ export function TerminalPane(props: TerminalPaneProps) {
       // Reporting the mouse lets htop, vim and mc behave as they do natively.
       rightClickSelectsWord: false,
       convertEol: false,
+      // The ruler down the right-hand edge is where highlight marks appear.
+      // Without a width it is not drawn at all, and a highlight in a
+      // ten-thousand-line scrollback is only useful if you can see where it
+      // is without scrolling to it.
+      overviewRuler: { width: 12, showTopBorder: true },
     })
 
     const fitAddon = new FitAddon()
@@ -106,6 +153,11 @@ export function TerminalPane(props: TerminalPaneProps) {
     search.current = searchAddon
     registerTerminal(callbacks.current.paneKey, xterm)
 
+    const marks = new Highlighter(xterm, {
+      onNotice: (message) => say('warning', message),
+    })
+    registerHighlighter(callbacks.current.paneKey, marks)
+
     const sock = new TerminalSocket(
       {
         sessionId: callbacks.current.sessionId,
@@ -122,7 +174,29 @@ export function TerminalPane(props: TerminalPaneProps) {
         onHostKeyPrompt: setPrompt,
         onHostKeyChanged: (info, message) => setChanged({ info, message }),
         onError: (_code, message) => setFailure(message),
-        onTerminalID: (id) => callbacks.current.onTerminalID(id),
+        onTerminalID: (id) => {
+          setTerminalId(id)
+          callbacks.current.onTerminalID(id)
+        },
+        onHighlights: (rules) => marks.setRules(rules),
+        onTrigger: (event: TriggerEvent) => {
+          // Highlight rules do not produce these — the server never runs one
+          // — so anything arriving here is a rule that did something.
+          say('trigger', `${event.name}: ${event.line}`)
+        },
+        onWarning: (code, message) => {
+          if (code === 'session_recorded') setRecorded(true)
+          say('warning', message)
+        },
+        onBroadcast: (terminals) => {
+          setGroup(terminals)
+          say(
+            'info',
+            terminals.length === 0
+              ? 'This keyboard now reaches only this terminal.'
+              : `This keyboard now reaches ${terminals.length + 1} terminals.`,
+          )
+        },
         onClosed: (exit) => {
           callbacks.current.onEnded(
             exit === undefined || exit === 0
@@ -163,6 +237,7 @@ export function TerminalPane(props: TerminalPaneProps) {
 
     return () => {
       observer.disconnect()
+      marks.dispose()
       unregisterTerminal(callbacks.current.paneKey)
       typed.dispose()
       binary.dispose()
@@ -211,6 +286,14 @@ export function TerminalPane(props: TerminalPaneProps) {
     socket.current?.answerHostKey(accepted)
   }
 
+  const setBroadcast = (terminals: string[]) => {
+    // Set on the server, which re-checks every terminal against this user
+    // before anything reaches it. The state here follows the acknowledgement
+    // rather than leading it: showing a group the server refused would be a
+    // lie about where the keys are going.
+    socket.current?.broadcast(terminals)
+  }
+
   const runSearch = (next: string, forward = true) => {
     setFinding(next)
     if (!next) return
@@ -228,12 +311,72 @@ export function TerminalPane(props: TerminalPaneProps) {
       <div className="pane-status" role="status">
         <StatusPill state={state} detail={detail} />
         <span className="pane-label">{props.label}</span>
+        {recorded && (
+          <span className="tag warn-tag" title="Output is being written to a transcript">
+            recording
+          </span>
+        )}
+        {group.length > 0 && (
+          <span className="tag warn-tag" data-testid="broadcast-badge">
+            typing into {group.length + 1}
+          </span>
+        )}
         <div className="pane-tools">
           <button className="link" onClick={() => setShowSearch((s) => !s)}>
             {showSearch ? 'Hide search' : 'Search'}
           </button>
+          <button
+            className="link"
+            disabled={!terminalId}
+            onClick={() => setMenu((m) => (m === 'snippets' ? 'none' : 'snippets'))}
+          >
+            Snippets
+          </button>
+          <button
+            className={'link' + (group.length > 0 ? ' active' : '')}
+            disabled={!terminalId}
+            onClick={() => setMenu((m) => (m === 'broadcast' ? 'none' : 'broadcast'))}
+          >
+            Broadcast
+          </button>
         </div>
       </div>
+
+      {menu === 'snippets' && terminalId && (
+        <SnippetMenu
+          terminalId={terminalId}
+          alsoTo={group}
+          onClose={() => setMenu('none')}
+          onSent={(message) => say('info', message)}
+        />
+      )}
+
+      {menu === 'broadcast' && terminalId && (
+        <BroadcastMenu
+          terminalId={terminalId}
+          candidates={props.otherTerminals}
+          group={group}
+          onChange={setBroadcast}
+          onClose={() => setMenu('none')}
+        />
+      )}
+
+      {notices.length > 0 && (
+        <ul className="pane-notices" data-testid="pane-notices">
+          {notices.map((notice) => (
+            <li key={notice.id} className={`notice-${notice.kind}`}>
+              <span>{notice.text}</span>
+              <button
+                className="link"
+                aria-label="Dismiss"
+                onClick={() => setNotices((prev) => prev.filter((n) => n.id !== notice.id))}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {showSearch && (
         <div className="pane-search">

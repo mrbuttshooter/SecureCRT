@@ -107,6 +107,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 		TerminalID: b.term.ID,
 		Cols:       cols,
 		Rows:       rows,
+		// Sent on every attach, including a reattach after a dropped
+		// socket, because the browser holds no state across one.
+		Highlights: b.term.Highlights,
 	})
 
 	// Replay before live output, so the terminal reads in the order it was

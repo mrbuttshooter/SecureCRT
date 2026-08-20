@@ -253,7 +253,36 @@ label.inline input { width: auto; }
   border-bottom: 1px solid var(--border); font-size: 0.82rem;
 }
 .pane-label { color: var(--muted); }
-.pane-tools { margin-left: auto; }
+.pane-tools { margin-left: auto; display: flex; gap: 0.5rem; }
+.pane-tools .link.active { color: var(--warn-border); font-weight: 600; }
+.pane-tools .link:disabled { color: var(--muted); cursor: default; text-decoration: none; }
+
+/* A popover rather than a modal: it belongs to one pane, and with several
+   tabs open a dialog over the window would cover terminals it has nothing to
+   do with — the same reasoning as the host key prompt below. */
+.pane-popover {
+  position: absolute; top: 2rem; right: 0.5rem; z-index: 3;
+  width: min(26rem, calc(100% - 1rem)); max-height: 60%; overflow: auto;
+  padding: 0.6rem 0.75rem; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); font-size: 0.9rem;
+}
+.pane-popover h3 { margin: 0 0 0.4rem; font-size: 0.95rem; }
+.pane-popover label { font-size: 0.85rem; }
+
+.pane-notices {
+  margin: 0; padding: 0.25rem 0.5rem; list-style: none;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+  max-height: 6.5rem; overflow-y: auto; font-size: 0.82rem;
+}
+.pane-notices li {
+  display: flex; gap: 0.5rem; align-items: baseline;
+  padding: 0.1rem 0; border-left: 3px solid transparent; padding-left: 0.4rem;
+}
+.pane-notices li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pane-notices .notice-trigger { border-left-color: var(--warn-border); }
+.pane-notices .notice-warning { border-left-color: var(--danger); }
+.pane-notices .notice-info { border-left-color: var(--accent); }
 .pane-screen { flex: 1; min-height: 0; padding: 0.25rem; background: #11151c; }
 .pane-search {
   display: flex; gap: 0.3rem; padding: 0.3rem 0.5rem;
@@ -481,3 +510,19 @@ table.grid th { color: var(--muted); font-weight: 500; }
 .notes li::before { content: "— "; }
 
 .transfer input[type="file"] { border: none; padding: 0; }
+
+/* Snippets. The body is shown as written, because a snippet whose newlines
+   are invisible is a snippet somebody will send with the lines run together. */
+.snippet-body {
+  margin: 0; max-width: 28rem; max-height: 6rem; overflow: auto;
+  font-family: var(--mono); font-size: 0.82rem; white-space: pre-wrap;
+}
+
+/* Watch rules. Each rule is a box so the fields that belong to one rule read
+   as one rule; with four rules in a flat list nobody can tell where one ends. */
+.triggers .trigger {
+  margin: 0.5rem 0; padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.triggers .trigger .row { align-items: flex-end; }
+.triggers .trigger input[type="number"] { width: 5rem; }

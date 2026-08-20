@@ -277,3 +277,34 @@ func trimLine(line string) string {
 	}
 	return line
 }
+
+// Highlight is one colouring rule on its way to the browser.
+//
+// A separate type from sessions.Trigger, holding three fields rather than
+// eight, and that is the point. A Trigger carries Send — which for a send
+// rule is a password, or the macro that becomes one — and a browser has no
+// use for it. Narrowing here means the rule cannot be widened by accident
+// later: adding a field to Trigger cannot put it on the wire.
+type Highlight struct {
+	Name    string `json:"name"`
+	Pattern string `json:"pattern"`
+	Colour  string `json:"colour,omitempty"`
+}
+
+// HighlightsFrom picks out the rules the browser draws.
+//
+// The complement of what WithTriggers keeps: exactly the actions that do not
+// run on the server. One list is split between the two ends by the same
+// predicate, so a rule cannot be handled twice or by neither.
+func HighlightsFrom(rules []sessions.Trigger) []Highlight {
+	var out []Highlight
+	for _, rule := range rules {
+		if rule.Action.RunsOnTheServer() {
+			continue
+		}
+		out = append(out, Highlight{
+			Name: rule.Name, Pattern: rule.Pattern, Colour: rule.Colour,
+		})
+	}
+	return out
+}

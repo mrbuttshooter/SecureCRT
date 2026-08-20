@@ -329,11 +329,11 @@ Stated plainly, because finding out later is worse:
 |---|---|
 | Terminal colour schemes and fonts | Format-specific; set them here in a few seconds. |
 | Keyboard maps and key bindings | Same. |
-| SecureCRT button bars | No equivalent yet; snippets arrive in Phase 7. |
-| VBScript / Python / JScript automation | Nothing here runs them. Scripted automation arrives in Phase 7 in a sandboxed JS runtime, and porting will be a rewrite rather than a conversion. |
-| Session logging settings | The connections come across; set logging afresh. |
+| SecureCRT button bars | Not imported. **Snippets** are the equivalent and are better for the common case: put `{{name}}` where a value changes and you are asked for it when you send it. See [`docs/POWER-USER.md`](POWER-USER.md). |
+| VBScript / Python / JScript automation | Nothing here runs them, and nothing will — the sandboxed scripting runtime the roadmap once named was deliberately not built (the reasoning is in [`docs/ROADMAP.md`](ROADMAP.md)). **Watch rules** cover what those scripts are mostly used for: when the output matches this, type that, or tell me, or stop. Anything genuinely conditional stays a rewrite, run from wherever you run scripts now. |
+| Keyword highlighting | Not imported; SecureCRT keeps it outside the session files. Re-create it as watch rules with the *highlight* action — on a folder, so it applies to everything inside. |
+| Session logging settings | The connections come across; turn on **Recording** afresh on the connection or its folder. Note the difference: a transcript here records what the device printed and never what you typed. |
 | PuTTY proxy settings | Named in a warning at import. Set a jump host on the connection if it needs one. |
-| Telnet and serial connections | Imported and stored, but no transport is wired to them until Phase 6. They will sit in your tree until then. |
 
 ---
 

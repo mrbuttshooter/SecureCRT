@@ -11,9 +11,10 @@ import { KnownHosts } from './views/KnownHosts'
 import { Files } from './views/Files'
 import { Transfer } from './views/Transfer'
 import { Tunnels } from './views/Tunnels'
+import { Snippets } from './views/Snippets'
 
 type Tab =
-  | 'terminal' | 'files' | 'tunnels' | 'credentials'
+  | 'terminal' | 'files' | 'tunnels' | 'snippets' | 'credentials'
   | 'hosts' | 'transfer' | 'sessions' | 'security'
 
 /**
@@ -124,6 +125,8 @@ export function App() {
                 onClick={() => setTab('files')}>Files</button>
         <button aria-current={tab === 'tunnels' ? 'page' : undefined}
                 onClick={() => setTab('tunnels')}>Tunnels</button>
+        <button aria-current={tab === 'snippets' ? 'page' : undefined}
+                onClick={() => setTab('snippets')}>Snippets</button>
         <button aria-current={tab === 'credentials' ? 'page' : undefined}
                 onClick={() => setTab('credentials')}>Credentials</button>
         <button aria-current={tab === 'hosts' ? 'page' : undefined}
@@ -147,6 +150,7 @@ export function App() {
       </div>
       {tab === 'files' && <Files />}
       {tab === 'tunnels' && <Tunnels />}
+      {tab === 'snippets' && <Snippets />}
       {tab === 'credentials' && <Credentials />}
       {tab === 'hosts' && <KnownHosts />}
       {tab === 'transfer' && <Transfer />}

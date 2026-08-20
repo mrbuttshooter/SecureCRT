@@ -258,6 +258,54 @@ export interface Settings {
   serial_stop_bits?: number | null
   serial_parity?: string | null
   serial_flow?: string | null
+
+  /**
+   * Rules that watch the output and act on it.
+   *
+   * Inherited from the folder, like the logon sequence: "tell me when any of
+   * these three hundred switches logs a link flap" is one rule in one place.
+   */
+  triggers?: Trigger[] | null
+}
+
+/** What a trigger does when its pattern matches. */
+export type TriggerAction = 'send' | 'notify' | 'highlight' | 'stop'
+
+export interface Trigger {
+  name: string
+  /** A regular expression, matched against the output as it arrives. */
+  pattern: string
+  action: TriggerAction
+  /** For a send: understands %USERNAME%, %PASSWORD%, $1 and the escapes. */
+  send?: string
+  /** For a highlight: a palette name, or a #rrggbb colour. */
+  colour?: string
+  /** How many times this rule may fire in one session. 0 means the default. */
+  max_fires?: number
+  /** Kept but not run, which is what people want when a rule misfires. */
+  disabled?: boolean
+}
+
+/** MAX_TRIGGERS matches the server's limit, so the form can say so first. */
+export const MAX_TRIGGERS = 16
+
+/**
+ * A snippet is a command somebody types often enough to stop typing.
+ *
+ * Personal for now. The table already carries the column that makes them
+ * shareable with a team, so that is a permissions question rather than a
+ * migration.
+ */
+export interface Snippet {
+  id: string
+  name: string
+  description: string
+  body: string
+  /** The {{placeholders}} in the body, in the order they first appear. */
+  parameters: string[]
+  sort_order: number
+  created_at: string
+  updated_at: string
 }
 
 export interface LogonStep {
@@ -351,6 +399,10 @@ export interface LiveTerminal {
   created_at: string
   attached: boolean
   closed: boolean
+  /** Output is being written to a transcript on the server. */
+  recorded?: boolean
+  /** The operator required the recording; it was not this user's choice. */
+  record_forced?: boolean
 }
 
 export interface KnownHost {

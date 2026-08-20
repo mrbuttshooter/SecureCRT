@@ -18,13 +18,15 @@ saved passwords from any machine, with nothing installed locally.
 Usable for its core purpose, and there is now a way in and a way out: sign in,
 bring your connections across from SecureCRT, PuTTY or OpenSSH, open SSH
 sessions in a browser, reach devices behind bastions and forward ports through
-them, move files to and from the hosts you reach — and export the lot again
-whenever you want to. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase
-plan and what each completed phase actually contains,
-[`docs/MIGRATING.md`](docs/MIGRATING.md) for moving a team over, and
-[`docs/TUNNELS.md`](docs/TUNNELS.md) for jump hosts, port forwarding and agent
-forwarding, and [`docs/PROTOCOLS.md`](docs/PROTOCOLS.md) for telnet, serial
-lines and console servers.
+them, move files to and from the hosts you reach, put one keyboard onto a whole
+rack — and export the lot again whenever you want to. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase plan and what each completed
+phase actually contains, [`docs/MIGRATING.md`](docs/MIGRATING.md) for moving a
+team over, [`docs/TUNNELS.md`](docs/TUNNELS.md) for jump hosts, port forwarding
+and agent forwarding, [`docs/PROTOCOLS.md`](docs/PROTOCOLS.md) for telnet,
+serial lines and console servers, and
+[`docs/POWER-USER.md`](docs/POWER-USER.md) for snippets, watch rules,
+broadcast, highlighting and transcripts.
 
 | Phase | Scope | State |
 |---|---|---|
@@ -35,8 +37,8 @@ lines and console servers.
 | 4 | Import / export (SecureCRT, PuTTY, OpenSSH) | **complete** |
 | 5 | Tunnels & jump hosts | **complete** |
 | 6 | Telnet, serial & console servers | **complete** |
-| 7 | Power-user features (broadcast, snippets, triggers) | next |
-| 8 | Enterprise (RBAC, session recording) | SSO delivered early, in Phase 1 |
+| 7 | Power-user features (broadcast, snippets, watch rules) | **complete** |
+| 8 | Enterprise (RBAC, team sharing) | SSO delivered early, in Phase 1 |
 | 9 | Hardening & operations | not started |
 
 ## Design in one page

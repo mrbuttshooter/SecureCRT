@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
   ApiError, api,
-  type Credential, type LogonStep, type SavedSession, type Settings, type Tree,
+  type Credential, type LogonStep, type SavedSession, type Settings,
+  type Trigger, type Tree,
 } from '../api'
+import { TriggerEditor } from './TriggerEditor'
 
 export interface SessionEditorProps {
   /** The connection being edited, or null when creating one. */
@@ -63,6 +65,14 @@ export function SessionEditor(props: SessionEditorProps) {
 
   const [logonSteps, setLogonSteps] = useState<LogonStep[]>(
     editing?.settings?.logon_steps ?? [],
+  )
+
+  const [triggers, setTriggers] = useState<Trigger[]>(editing?.settings?.triggers ?? [])
+
+  // A transcript is written on the server, so it is not a local preference
+  // and does not belong in the appearance menu with the font size.
+  const [logSession, setLogSession] = useState(
+    editing?.settings?.log_session ?? false,
   )
 
   const [baud, setBaud] = useState(
@@ -137,6 +147,13 @@ export function SessionEditor(props: SessionEditorProps) {
       serial_baud: isSerial && baud ? Number(baud) : null,
       serial_parity: isSerial && parity ? parity : null,
       serial_flow: isSerial && flow ? flow : null,
+
+      // Same reasoning as the logon steps: an empty list is not "no rules",
+      // it is "no rules here", which is how a connection opts out of a
+      // folder's rules. Null is silence, and silence inherits.
+      triggers: triggers.length > 0 ? triggers : editing?.settings?.triggers ?? null,
+
+      log_session: logSession ? true : null,
     }
 
     const body = {
@@ -385,6 +402,27 @@ export function SessionEditor(props: SessionEditorProps) {
         )}
       </details>
       )}
+
+      <TriggerEditor triggers={triggers} onChange={setTriggers} scope="connection" />
+
+      <details>
+        <summary>Recording</summary>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={logSession}
+            onChange={(e) => setLogSession(e.target.checked)}
+          />
+          Write a transcript of this session to the server
+        </label>
+        <p className="muted">
+          The transcript holds what the device printed, and never what you
+          typed — a keystroke log would capture passwords typed at prompts
+          this server never sees. Files are written under the server{"'"}s
+          transcript directory, readable only by the service account, and the
+          terminal says so when a session is being recorded.
+        </p>
+      </details>
 
       <details>
         <summary>Advanced</summary>

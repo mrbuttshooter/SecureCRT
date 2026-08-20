@@ -235,6 +235,10 @@ func TestSecurityHeaders(t *testing.T) {
 				"default-src 'self'",
 				"frame-ancestors 'none'",
 				"base-uri 'none'",
+				// Named explicitly rather than inherited from script-src, so
+				// keyword highlighting's worker cannot be switched off by a
+				// later tightening of script-src that nobody connected to it.
+				"worker-src 'self'",
 			} {
 				if !strings.Contains(csp, directive) {
 					t.Errorf("CSP is missing %q; full value: %s", directive, csp)

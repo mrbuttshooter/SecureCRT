@@ -232,11 +232,51 @@ Named in the original scope and deliberately narrowed:
   are rather than as laws, because every one of these appliances lets somebody
   change them.
 
-## Phase 7 — Power-user features — next
+## Phase 7 — Power-user features ✅
 
-Broadcast input to many tabs at once; parameterised command snippets, personal
-and team-shared; triggers and expect automation in a sandboxed JS runtime;
-keyword highlighting; session transcript logging; scrollback search.
+- [x] Session transcripts, written on the server, output only — the setting
+      had existed since Phase 2 and nothing wrote a byte
+- [x] Watch rules: regular expressions with tell-me, highlight, type and stop,
+      running with the browser closed, rate-capped and audited
+- [x] Snippets: parameterised commands whose values are asked for and never
+      stored, migration `0004`
+- [x] Broadcast: one keyboard onto many terminals, fanned out on the server,
+      all-or-nothing, audited per group change and never per keystroke
+- [x] Keyword highlighting, drawn in the browser with marks in the overview
+      ruler, matched in a worker that can be killed
+- [x] Scrollback search — already delivered in Phase 2
+- [x] [`docs/POWER-USER.md`](POWER-USER.md)
+
+**Where each rule runs is not an implementation detail.** Everything except
+highlighting runs on the server, because a rule that answers a `[confirm]`
+prompt during a twenty-minute upgrade is most needed when nobody is watching.
+Highlighting is the browser's because the server has no idea what a colour is.
+The same predicate splits the list at both ends, so a rule cannot be handled
+twice or by neither.
+
+**Broadcast fans out on the server** for the same class of reason: doing it in
+the browser would put "may this person type into that terminal" in the client,
+which is not a check, and would leave "which terminals is this keyboard
+reaching" a fact only the browser knew.
+
+**A transcript records what the device printed and never what was typed.** A
+keystroke log captures passwords typed at prompts this server never sees, and
+would turn every transcript into a secret store.
+
+Named in the original scope and deliberately narrowed:
+
+- **Triggers are declarative, not a sandboxed JS runtime.** An interpreter
+  evaluating per-user scripts inside the process that holds every engineer's
+  encrypted credentials is a large surface: patching, an interrupt for scripts
+  that never return, a memory bound, and an exact account of which host
+  functions are reachable. What it buys over `when you see X, do Y` is
+  conditional logic and string manipulation, wanted by a small fraction of
+  cases. Go's RE2 also means no pattern a user writes can be slow, which a
+  scripting engine would give up.
+- **Snippets are personal, not team-shared.** The `0004` table already carries
+  the owner column that makes sharing possible, so this is a permissions
+  question for Phase 8 rather than a migration — and building half a
+  permissions model here would mean building it twice.
 
 ## Phase 8 — Enterprise
 

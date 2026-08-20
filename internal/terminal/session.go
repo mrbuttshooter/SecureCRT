@@ -81,6 +81,12 @@ type Terminal struct {
 	// Triggers is how many rules are watching, for the record.
 	Triggers int
 
+	// Highlights are the colouring rules the browser draws, sent to it when
+	// it attaches. Held on the terminal rather than handed to the bridge, so
+	// a browser that reconnects after a dropped socket gets them back with
+	// the scrollback instead of losing its colours until the next reload.
+	Highlights []Highlight
+
 	transcript *Transcript
 
 	shell Shell
@@ -265,6 +271,9 @@ type OpenParams struct {
 	// Triggers is how many rules are watching this session.
 	Triggers int
 
+	// Highlights are the rules the browser draws rather than the server.
+	Highlights []Highlight
+
 	// Transcript is the open recording, when there is one.
 	Transcript *Transcript
 
@@ -319,6 +328,7 @@ func (m *Manager) Open(shell Shell, release func(), p OpenParams) (*Terminal, er
 		AgentRefused: p.AgentRefused,
 		LogonSteps:   p.LogonSteps,
 		Triggers:     p.Triggers,
+		Highlights:   p.Highlights,
 		Recorded:     p.Recorded,
 		RecordForced: p.RecordForced,
 		transcript:   p.Transcript,

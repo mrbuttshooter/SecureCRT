@@ -108,7 +108,7 @@ EOF
 # experience or on an empty list would then depend on which file happened to
 # run first. An earlier version did, and broke the moment a third spec was
 # added.
-for account in admin terminal files transfer tunnels protocols; do
+for account in admin terminal files transfer tunnels protocols power; do
     echo "a very long admin password" | \
         ./bin/bkd admin create-user --config "$WORKDIR/config.yaml" \
             -email "${account}@example.com" -name "Test ${account}" -admin >/dev/null

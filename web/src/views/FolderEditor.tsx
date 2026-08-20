@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { ApiError, api, type Credential, type Folder, type Settings } from '../api'
+import { ApiError, api, type Credential, type Folder, type Settings, type Trigger } from '../api'
+import { TriggerEditor } from './TriggerEditor'
 
 export interface FolderEditorProps {
   folder: Folder | null
@@ -25,6 +26,8 @@ export function FolderEditor(props: FolderEditorProps) {
   const [username, setUsername] = useState(defaults.username ?? '')
   const [port, setPort] = useState(defaults.port != null ? String(defaults.port) : '')
   const [credentialId, setCredentialId] = useState(defaults.credential_id ?? '')
+  const [triggers, setTriggers] = useState<Trigger[]>(defaults.triggers ?? [])
+  const [logSession, setLogSession] = useState(defaults.log_session ?? false)
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -45,6 +48,12 @@ export function FolderEditor(props: FolderEditorProps) {
       username: username.trim() || null,
       port: port ? Number(port) : null,
       credential_id: credentialId || null,
+
+      // Null rather than [], so "this folder sets no rules" is one state
+      // rather than two that have to agree. A connection inside it can still
+      // send an explicit empty list to opt out of a parent folder's rules.
+      triggers: triggers.length > 0 ? triggers : null,
+      log_session: logSession ? true : null,
     }
 
     const body = editing
@@ -101,6 +110,14 @@ export function FolderEditor(props: FolderEditorProps) {
             </option>
           ))}
         </select>
+      </label>
+
+      <TriggerEditor triggers={triggers} onChange={setTriggers} scope="folder" />
+
+      <label className="check">
+        <input type="checkbox" checked={logSession}
+               onChange={(e) => setLogSession(e.target.checked)} />
+        Record a transcript of every session in this folder
       </label>
 
       {error && <div className="error">{error}</div>}

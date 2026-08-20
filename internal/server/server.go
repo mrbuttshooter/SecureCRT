@@ -515,8 +515,16 @@ func securityHeaders(next http.Handler) http.Handler {
 		// reach anywhere, because default-src, img-src and font-src permit
 		// this origin only. And script-src stays strict, which is the
 		// directive that actually stops an attacker executing code.
+		//
+		// worker-src is named explicitly rather than left to fall back
+		// through child-src to script-src. Keyword highlighting runs its
+		// regular expressions in a worker — the only place in a browser they
+		// can be given a deadline — so a policy change that tightened
+		// script-src would otherwise turn that feature off by accident, with
+		// no indication of why.
 		h.Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+			"default-src 'self'; script-src 'self'; worker-src 'self'; "+
+				"style-src 'self' 'unsafe-inline'; "+
 				"img-src 'self' data:; font-src 'self'; connect-src 'self'; "+
 				"frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		h.Set("X-Content-Type-Options", "nosniff")

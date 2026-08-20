@@ -15,7 +15,9 @@ bkd  ── one static Go binary, systemd unit, unprivileged user
       ├── internal/auth       Argon2id, TOTP, tokens, OIDC/SAML
       ├── internal/proto      sshx · sftpx · telnetx · serialx · tunnel
       ├── internal/remote     the shared connection pool and the dial path
-      ├── internal/terminal   live shells, replay buffers, reattachment
+      ├── internal/terminal   live shells, replay buffers, reattachment,
+      │                       transcripts and watch rules
+      ├── internal/snippets   saved commands and their placeholders
       ├── internal/files      SFTP sessions and the transfer engine
       ├── internal/sessions   the saved connection tree and jump chains
       ├── internal/portability import/export adapters
@@ -156,6 +158,31 @@ The upgrade checks `Origin` explicitly. A WebSocket is not covered by the
 same-origin policy, so without that check any page on the internet could open
 a terminal using a signed-in visitor's cookies.
 
+### What sits between the shell and the browser
+
+A shell is a `terminal.Shell` — read, write, resize, wait, close — and the
+three protocols supply one each. Everything that watches or records a session
+is a wrapper around that interface rather than a branch inside any protocol:
+
+```
+    telnetx.Conn / sshx session / serialx.Port
+      → WithLogon       types at a device's own login prompt
+      → WithTranscript  writes output to disk
+      → WithTriggers    matches the watch rules and acts on them
+      → terminal.Manager
+```
+
+The order is the meaning. The logon wrapper is innermost so a transcript
+records the login it performed; triggers are outermost so they see everything
+the person sees. All three run on the read path, which is why they keep
+working with no browser attached — a rule that answers a `[confirm]` prompt
+during a twenty-minute upgrade is most needed when nobody is watching.
+
+Broadcast is the one thing that is *not* a wrapper. It lives on the `Bridge`,
+one per browser socket, because a broadcast group belongs to one tab rather
+than to a terminal: a second tab on the same session must not inherit it, and
+closing the tab must end it.
+
 ## Files
 
 A file session is SFTP layered on an existing SSH connection rather than a
@@ -247,9 +274,10 @@ carries no credentials, and it is how somebody leaves for plain OpenSSH.
 | `internal/hostkeys` | host key trust decisions, personal and org-wide |
 | `internal/remote` | shared, reference-counted SSH connections and the dial path |
 | `internal/files` | SFTP sessions and the server-side transfer queue |
-| `internal/terminal` | live SSH sessions, the WebSocket bridge, survival |
+| `internal/terminal` | live sessions, the WebSocket bridge, survival, transcripts and watch rules |
 | `internal/proto/sshx`, `internal/proto/sftpx` | SSH and SFTP |
-| `internal/proto/*` | Telnet, serial, tunnels *(phases 5–6)* |
+| `internal/proto/telnetx`, `internal/proto/serialx`, `internal/proto/tunnel` | Telnet, serial lines, port forwarding |
+| `internal/snippets` | saved commands and their `{{placeholders}}` |
 | `internal/portability` | import and export adapters, and the upload reader both the API and the CLI drive |
 | `internal/portability/ppk` | PuTTY private key files, converted to OpenSSH |
 | `internal/portability/securecrt` | SecureCRT's two password formats and its `.ini` syntax |

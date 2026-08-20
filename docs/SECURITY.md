@@ -390,8 +390,53 @@ rather than on the path before.
 unencrypted JSON document. `%PASSWORD%` is substituted at connect time from
 the credential the connection already names, and the audit record carries the
 number of steps and never their content. Escapes are resolved on the template
-before the value is substituted, so a password containing `` cannot become a
+before the value is substituted, so a password containing `
+` cannot become a
 carriage return followed by a command.
+
+## Snippets, watch rules, broadcast and transcripts
+
+The reasoning behind each, and what each is for, is in
+[`docs/POWER-USER.md`](POWER-USER.md). Five properties belong here:
+
+**A transcript records output and never keystrokes.** A keystroke log would
+capture passwords typed at prompts this server never sees — an enable
+password, a `sudo` password, a credential for a system three hops away — and
+would turn every transcript into a secret store held in plaintext outside the
+vault. Transcripts are written under `paths.session_log_dir` at 0600 through
+an `os.Root`, so a session name cannot escape the directory whatever it
+contains, and the terminal says a session is being recorded whether the user
+chose it or an operator required it.
+
+**A watch rule stores a placeholder, never a password**, exactly as a logon
+sequence does, and through the same single-pass expander. `%PASSWORD%` is
+substituted at connect time from the credential the connection already names.
+The pass is single deliberately: a rule's capture groups hold whatever the
+device printed, so a two-pass expansion would hand the far end an
+escape-sequence primitive — print a backslash and an `r` followed by a
+command, and the command gets typed back with whatever privilege the session
+has.
+
+**A rule that types is audited; what it typed is not.** The record carries the
+rule's name and the line that matched, because "a rule typed at a production
+device on somebody's behalf" is an action taken. Its `send` is never recorded
+and never sent to the browser, because it may be a password.
+
+**Broadcast is authorised on the server, once per group change.** Every target
+is resolved through the user's own terminal list at every change, so a stale
+or guessed identifier reaches nothing, and the group is refused entirely if
+any member has gone. Fan-out in the browser would have put that check in the
+client. The audit record names the group and its size — never per keystroke,
+which would be a keystroke log by another name.
+
+**Highlight patterns run in a killable worker.** Everything else about watch
+rules is safe by construction because Go's RE2 has no backtracking; the
+browser's engine does. A highlight rule can be inherited from a shared folder,
+so somebody else's pattern can run in your tab — an availability concern, not
+a confidentiality one, and bounded by running the matching in a Web Worker
+that is terminated if it misses its deadline. `worker-src 'self'` is named
+explicitly in the content security policy so a later tightening of
+`script-src` cannot switch that off by accident.
 
 ## Tunnels
 
@@ -454,6 +499,10 @@ test that fails if they regress, rather than only a convention:
 | An oversized upload is refused, not truncated | A test uploads past the cap and asserts 413 and that no whole-looking file appears on the host |
 | An account with no vault cannot receive secrets | A test imports a payload carrying a password into a vault-less account and asserts it is refused rather than silently thinned |
 | Everything shipped in `config.example.yaml` still exists | A test loads the file operators are told to copy, and another walks the struct tags to insist every setting is mentioned in it |
+| A watch rule's text never reaches the browser | Highlighting is sent as its own three-field type, so a `Trigger` field cannot be widened onto the wire; a test saves a send rule carrying a distinctive string and asserts it appears in no control frame |
+| A password containing a backslash cannot become a command | Escapes are resolved on the template before values are substituted, in one pass; tests drive it from both a logon step and a rule's capture group |
+| A broadcast group cannot reach somebody else's terminal | Every target is resolved through the owner's terminal list at each change; a test names a second account's terminal and asserts the whole group is refused |
+| Highlight matching cannot freeze a tab | It runs in a Web Worker with a deadline and is terminated on missing it; `worker-src 'self'` is asserted present in the policy so the worker cannot be disabled by a later change to `script-src` |
 
 ## Reporting a vulnerability
 

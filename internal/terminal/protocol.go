@@ -134,6 +134,11 @@ type Control struct {
 	// Trigger carries a rule that fired, for ControlTrigger.
 	Trigger *TriggerEvent `json:"trigger,omitempty"`
 
+	// Highlights are the browser's colouring rules, sent with the opening
+	// status. Never the whole trigger set: the rest of it runs here, and one
+	// of those rules holds a password.
+	Highlights []Highlight `json:"highlights,omitempty"`
+
 	// Terminals names a broadcast group, in both directions: the browser
 	// sends the terminals to join, and the acknowledgement carries the ones
 	// that were joined.

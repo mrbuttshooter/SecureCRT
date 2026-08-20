@@ -10,9 +10,9 @@
 // the recent scrollback, not dialling the host again.
 
 export type ControlType =
-  | 'resize' | 'host_key_decision' | 'ping'
+  | 'resize' | 'host_key_decision' | 'broadcast' | 'ping'
   | 'status' | 'host_key_prompt' | 'host_key_changed'
-  | 'error' | 'closed' | 'pong'
+  | 'warning' | 'trigger' | 'error' | 'closed' | 'pong'
 
 export type ConnectStatus =
   | 'dialling' | 'verifying_host' | 'authenticating' | 'connected' | 'reattached'
@@ -27,6 +27,21 @@ export interface HostKeyInfo {
   org_wide?: boolean
 }
 
+/** One keyword-highlighting rule, drawn here rather than on the server. */
+export interface HighlightRule {
+  name: string
+  pattern: string
+  colour?: string
+}
+
+/** TriggerEvent is one of the user's rules firing. Never carries what it sent. */
+export interface TriggerEvent {
+  name: string
+  action: 'send' | 'notify' | 'highlight' | 'stop'
+  line: string
+  colour?: string
+}
+
 export interface Control {
   type: ControlType
   cols?: number
@@ -38,6 +53,9 @@ export interface Control {
   accepted?: boolean
   terminal_id?: string
   exit_status?: number
+  highlights?: HighlightRule[]
+  trigger?: TriggerEvent
+  terminals?: string[]
 }
 
 /** How the socket is doing, as far as the interface needs to care. */
@@ -57,6 +75,24 @@ export interface TerminalSocketHandlers {
   onError: (code: string, message: string) => void
   onTerminalID: (id: string) => void
   onClosed: (exitStatus?: number) => void
+
+  /**
+   * onHighlights carries the colouring rules, on every attach.
+   *
+   * Sent again after a reconnect rather than once at the start, because the
+   * browser holds nothing across a dropped socket and a long-running session
+   * is exactly the one whose network has had time to blink.
+   */
+  onHighlights: (rules: HighlightRule[]) => void
+
+  /** onTrigger reports one of the user's watch rules firing. */
+  onTrigger: (event: TriggerEvent) => void
+
+  /** onWarning is something worth saying that did not stop the terminal. */
+  onWarning: (code: string, message: string) => void
+
+  /** onBroadcast acknowledges the terminals this keyboard now also reaches. */
+  onBroadcast: (terminals: string[]) => void
 }
 
 /**
@@ -142,6 +178,18 @@ export class TerminalSocket {
     this.control({ type: 'host_key_decision', accepted })
   }
 
+  /**
+   * broadcast puts this keyboard onto several terminals, or — with an empty
+   * list — takes it off them.
+   *
+   * The fan-out happens on the server. Writing to several sockets from here
+   * would put the "may this person type into that terminal" check in the
+   * browser, which is not a check at all.
+   */
+  broadcast(terminals: string[]): void {
+    this.control({ type: 'broadcast', terminals })
+  }
+
   private control(msg: Control): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return
     this.ws.send(JSON.stringify(msg))
@@ -225,11 +273,24 @@ export class TerminalSocket {
     switch (msg.type) {
       case 'status':
         if (msg.terminal_id) this.adoptTerminalID(msg.terminal_id)
+        if (msg.highlights) this.handlers.onHighlights(msg.highlights)
         if (msg.status === 'connected' || msg.status === 'reattached') {
           this.handlers.onState('live')
         } else {
           this.handlers.onState('connecting', msg.status)
         }
+        break
+
+      case 'trigger':
+        if (msg.trigger) this.handlers.onTrigger(msg.trigger)
+        break
+
+      case 'warning':
+        this.handlers.onWarning(msg.code ?? 'warning', msg.message ?? '')
+        break
+
+      case 'broadcast':
+        this.handlers.onBroadcast(msg.terminals ?? [])
         break
 
       case 'host_key_prompt':
