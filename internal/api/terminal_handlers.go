@@ -54,7 +54,7 @@ func (a *API) handleCloseTerminal(w http.ResponseWriter, r *http.Request) {
 
 	a.audit.Record(r.Context(), audit.Event{
 		ActorID: u.ID, ActorEmail: u.Email, IPAddress: a.clientIP(r),
-		Action: "terminal.closed", TargetType: "terminal", TargetID: id,
+		Action: audit.ActionTerminalClosed, TargetType: "terminal", TargetID: id,
 	})
 
 	writeJSON(w, a.log, http.StatusOK, map[string]any{"closed": true})
@@ -179,7 +179,7 @@ func (a *API) openTerminal(
 			}
 			a.audit.Record(ctx, audit.Event{
 				ActorID: u.ID, ActorEmail: u.Email, IPAddress: a.clientIP(r),
-				Action: "terminal.connect.failed", Outcome: audit.OutcomeFailure,
+				Action: audit.ActionTerminalConnectFailed, Outcome: audit.OutcomeFailure,
 				Severity: severity, TargetType: "session", TargetID: savedSessionID,
 				Detail: map[string]any{"reason": ce.Code},
 			})
@@ -191,7 +191,7 @@ func (a *API) openTerminal(
 
 	a.audit.Record(ctx, audit.Event{
 		ActorID: u.ID, ActorEmail: u.Email, IPAddress: a.clientIP(r),
-		Action: "terminal.connected", TargetType: "session",
+		Action: audit.ActionTerminalConnected, TargetType: "session",
 		TargetID: savedSessionID, TargetLabel: term.Label,
 		Detail: map[string]any{
 			"host": term.Host, "port": term.Port,

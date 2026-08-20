@@ -11,6 +11,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/auth"
 	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
+	"github.com/mrbuttshooter/securecrt/internal/files"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store"
@@ -65,6 +66,10 @@ type API struct {
 	connector   *terminal.Connector
 	hostKeys    *hostkeys.Store
 
+	// The file side: open SFTP sessions and the server-side transfer queue.
+	fileSessions *files.Manager
+	transfers    *files.Transfers
+
 	// csrfKey signs CSRF tokens. An HKDF subkey of the master key, so the
 	// service needs no additional secret on disk.
 	csrfKey vault.Key
@@ -86,6 +91,9 @@ type Deps struct {
 	Terminals   *terminal.Manager
 	Connector   *terminal.Connector
 	HostKeys    *hostkeys.Store
+
+	FileSessions *files.Manager
+	Transfers    *files.Transfers
 }
 
 // New builds an API.
@@ -114,7 +122,11 @@ func New(cfg Config, deps Deps, log *slog.Logger) (*API, error) {
 		terminals:   deps.Terminals,
 		connector:   deps.Connector,
 		hostKeys:    deps.HostKeys,
-		csrfKey:     csrfKey,
+
+		fileSessions: deps.FileSessions,
+		transfers:    deps.Transfers,
+
+		csrfKey: csrfKey,
 	}, nil
 }
 
@@ -209,6 +221,15 @@ func (a *API) Routes() http.Handler {
 		"GET /api/tree/sessions/{id}/resolved",
 		"GET /api/terminals", "DELETE /api/terminals/{id}",
 		"GET /api/known-hosts", "DELETE /api/known-hosts/{id}",
+
+		"GET /api/files/sessions", "POST /api/files/sessions",
+		"DELETE /api/files/sessions/{id}",
+		"GET /api/files/list", "GET /api/files/stat",
+		"POST /api/files/mkdir", "POST /api/files/rename",
+		"POST /api/files/chmod", "POST /api/files/chown",
+		"DELETE /api/files/entry",
+		"POST /api/files/copy",
+		"GET /api/files/transfers", "DELETE /api/files/transfers/{id}",
 	} {
 		mux.Handle(route, full)
 	}
@@ -218,6 +239,14 @@ func (a *API) Routes() http.Handler {
 	// authentication, MFA and vault requirements.
 	mux.Handle("GET /api/terminals/socket", chain(
 		http.HandlerFunc(a.handleTerminalSocket), a.withAuth, a.withMFA))
+
+	// Downloads and uploads stream raw bytes with their own headers — Range,
+	// Content-Disposition, Content-Length — so they are mounted directly
+	// rather than through the JSON dispatcher, behind the same chain.
+	mux.Handle("GET /api/files/content", chain(
+		http.HandlerFunc(a.handleDownload), a.withAuth, a.withMFA))
+	mux.Handle("PUT /api/files/content", chain(
+		http.HandlerFunc(a.handleUpload), a.withAuth, a.withMFA))
 
 	// CSRF wraps everything: a state-changing request must carry a valid
 	// token whether or not it is authenticated, so an unauthenticated login
@@ -305,6 +334,33 @@ func (a *API) routeAuthenticated(w http.ResponseWriter, r *http.Request) {
 		a.handleListKnownHosts(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/known-hosts/"):
 		a.handleForgetKnownHost(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/files/sessions":
+		a.handleListFileSessions(w, r)
+	case r.Method == http.MethodPost && path == "/api/files/sessions":
+		a.handleOpenFileSession(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/files/sessions/"):
+		a.handleCloseFileSession(w, r)
+	case r.Method == http.MethodGet && path == "/api/files/list":
+		a.handleListDirectory(w, r)
+	case r.Method == http.MethodGet && path == "/api/files/stat":
+		a.handleStatPath(w, r)
+	case r.Method == http.MethodPost && path == "/api/files/mkdir":
+		a.handleMkdir(w, r)
+	case r.Method == http.MethodPost && path == "/api/files/rename":
+		a.handleRename(w, r)
+	case r.Method == http.MethodPost && path == "/api/files/chmod":
+		a.handleChmod(w, r)
+	case r.Method == http.MethodPost && path == "/api/files/chown":
+		a.handleChown(w, r)
+	case r.Method == http.MethodDelete && path == "/api/files/entry":
+		a.handleDeletePath(w, r)
+	case r.Method == http.MethodPost && path == "/api/files/copy":
+		a.handleStartCopy(w, r)
+	case r.Method == http.MethodGet && path == "/api/files/transfers":
+		a.handleListTransfers(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/files/transfers/"):
+		a.handleCancelTransfer(w, r)
 
 	case r.Method == http.MethodGet && path == "/api/credentials":
 		a.handleListCredentials(w, r)

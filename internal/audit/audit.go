@@ -72,6 +72,25 @@ const (
 	ActionExported          Action = "portability.exported"
 	ActionExportedPlaintext Action = "portability.exported_plaintext"
 
+	// Terminals.
+	ActionTerminalConnected     Action = "terminal.connected"
+	ActionTerminalConnectFailed Action = "terminal.connect.failed"
+	ActionTerminalClosed        Action = "terminal.closed"
+
+	// Files. Reads and writes against a managed host are recorded because
+	// "who took a copy of the running configuration, and when" is the first
+	// question asked after an incident.
+	ActionFileSessionOpened Action = "files.session.opened"
+	ActionFileDownloaded    Action = "files.download"
+	ActionFileUploaded      Action = "files.upload"
+	ActionFileCopied        Action = "files.copy"
+	ActionFileDeleted       Action = "files.delete"
+	ActionFileTreeDeleted   Action = "files.delete.recursive"
+	ActionFileRenamed       Action = "files.rename"
+	ActionDirectoryCreated  Action = "files.mkdir"
+	ActionFileChmod         Action = "files.chmod"
+	ActionFileChown         Action = "files.chown"
+
 	// Administration.
 	ActionUserCreated   Action = "admin.user.created"
 	ActionUserDisabled  Action = "admin.user.disabled"
@@ -118,6 +137,12 @@ var minimumSeverity = map[Action]Severity{
 	ActionMFADisabled:       SeverityNotice,
 	ActionLoginThrottled:    SeverityNotice,
 	ActionSSOFailed:         SeverityNotice,
+
+	// Taking a copy of a file off a managed host, or destroying a tree on
+	// one, is exactly the kind of event an investigation starts from. Neither
+	// is routine enough to file as "info".
+	ActionFileDownloaded:  SeverityNotice,
+	ActionFileTreeDeleted: SeverityNotice,
 }
 
 var severityRank = map[Severity]int{

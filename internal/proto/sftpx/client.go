@@ -31,6 +31,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -476,6 +477,30 @@ func (c *Client) Size(p string) (int64, error) {
 		return 0, ErrIsDirectory
 	}
 	return info.Size(), nil
+}
+
+// ParseMode reads permission bits written the way chmod takes them: "755",
+// "0644", "0o600".
+//
+// The inverse of what Entry.Mode renders, so a value shown to a user can be
+// handed straight back. Only the permission bits are accepted; setuid and the
+// file-type bits are not settable through this path and quietly accepting
+// them would misreport what happened.
+func ParseMode(s string) (fs.FileMode, error) {
+	trimmed := strings.TrimPrefix(strings.TrimPrefix(s, "0o"), "0O")
+	if trimmed == "" {
+		return 0, fmt.Errorf("sftpx: %q is not a mode", s)
+	}
+
+	value, err := strconv.ParseUint(trimmed, 8, 32)
+	if err != nil {
+		return 0, fmt.Errorf("sftpx: %q is not an octal mode", s)
+	}
+	if value > 0o777 {
+		return 0, fmt.Errorf("sftpx: %q sets bits beyond the permission bits", s)
+	}
+
+	return fs.FileMode(value), nil
 }
 
 // normalise cleans a path and makes a relative one relative to the session's

@@ -19,6 +19,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/auth"
 	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
+	"github.com/mrbuttshooter/securecrt/internal/files"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
@@ -52,6 +53,11 @@ type Server struct {
 	// connections holds the shared SSH connections underneath the terminals
 	// and the file browser.
 	connections *remote.Pool
+
+	// fileSessions holds open SFTP sessions; transfers runs the server-side
+	// jobs — host-to-host copies and recursive deletes.
+	fileSessions *files.Manager
+	transfers    *files.Transfers
 }
 
 // New builds a Server: it opens the database, applies migrations if
@@ -176,20 +182,25 @@ func (s *Server) buildAPI(ctx context.Context) error {
 	s.terminals = terminal.NewManager(s.log)
 	connector := terminal.NewConnector(s.terminals, dialer, s.log)
 
+	s.fileSessions = files.NewManager(dialer, s.log)
+	s.transfers = files.NewTransfers(s.fileSessions, s.log)
+
 	s.api, err = api.New(apiCfg, api.Deps{
-		DB:          s.db,
-		Users:       userStore,
-		Vaults:      vaultService,
-		Sessions:    authSessions,
-		Throttle:    throttle,
-		OIDC:        oidcProvider,
-		Credentials: credentialStore,
-		Audit:       audit.NewRecorder(s.db, s.log),
-		MasterKey:   s.master,
-		SessionTree: sessionTree,
-		Terminals:   s.terminals,
-		Connector:   connector,
-		HostKeys:    hostKeyStore,
+		DB:           s.db,
+		Users:        userStore,
+		Vaults:       vaultService,
+		Sessions:     authSessions,
+		Throttle:     throttle,
+		OIDC:         oidcProvider,
+		Credentials:  credentialStore,
+		Audit:        audit.NewRecorder(s.db, s.log),
+		MasterKey:    s.master,
+		SessionTree:  sessionTree,
+		Terminals:    s.terminals,
+		FileSessions: s.fileSessions,
+		Transfers:    s.transfers,
+		Connector:    connector,
+		HostKeys:     hostKeyStore,
 	}, s.log)
 	return err
 }
@@ -321,13 +332,21 @@ func (s *Server) warnOnRiskyPolicy() {
 //
 // The order is deliberate:
 //
-//  1. Terminals, so every remote shell gets an orderly exit rather than a
+//  1. Transfers and file sessions, so a copy in flight is cancelled rather
+//     than left writing into a connection about to disappear.
+//  2. Terminals, so every remote shell gets an orderly exit rather than a
 //     dropped TCP connection some host has to time out.
-//  2. The connection pool, which sends each host a clean SSH disconnect and
-//     catches anything a terminal did not own — a file browser, say.
-//  3. Key material, before the database, so a crash while closing the
+//  3. The connection pool, which sends each host a clean SSH disconnect and
+//     catches anything no terminal owned.
+//  4. Key material, before the database, so a crash while closing the
 //     database still leaves no key in a core dump.
 func (s *Server) closeResources() {
+	if s.transfers != nil {
+		s.transfers.Shutdown()
+	}
+	if s.fileSessions != nil {
+		s.fileSessions.Shutdown()
+	}
 	if s.terminals != nil {
 		s.terminals.Close()
 	}

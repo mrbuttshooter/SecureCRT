@@ -17,6 +17,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/auth"
 	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
+	"github.com/mrbuttshooter/securecrt/internal/files"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
@@ -121,15 +122,24 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 	t.Cleanup(terminals.Close)
 	connector := terminal.NewConnector(terminals, dialer, quiet)
 
+	fileSessions := files.NewManager(dialer, quiet)
+	transfers := files.NewTransfers(fileSessions, quiet)
+	t.Cleanup(func() {
+		transfers.Shutdown()
+		fileSessions.Shutdown()
+	})
+
 	a, err := New(apiCfg, Deps{
 		DB: db, Users: userStore, Vaults: vaultSvc, Sessions: authSessions,
 		Throttle: throttle, Credentials: credStore,
-		Audit:       audit.NewRecorder(db, quiet),
-		MasterKey:   master,
-		SessionTree: sessionTree,
-		Terminals:   terminals,
-		Connector:   connector,
-		HostKeys:    hostKeyStore,
+		Audit:        audit.NewRecorder(db, quiet),
+		MasterKey:    master,
+		SessionTree:  sessionTree,
+		Terminals:    terminals,
+		FileSessions: fileSessions,
+		Transfers:    transfers,
+		Connector:    connector,
+		HostKeys:     hostKeyStore,
 	}, quiet)
 	if err != nil {
 		t.Fatal(err)
