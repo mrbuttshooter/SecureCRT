@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    # The store package runs its whole suite against both SQLite and
+    # PostgreSQL. SQLite needs nothing; Postgres is provided here so the
+    # driver actually used in production is exercised on every push.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bkdtest
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Verify formatting
+        run: |
+          unformatted=$(gofmt -l ./cmd ./internal)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Test
+        env:
+          BKD_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/bkdtest?sslmode=disable
+        run: go test ./... -count=1 -coverprofile=coverage.out
+
+      # The vault holds every credential in the system, so its concurrency is
+      # verified separately rather than relying on the default run.
+      - name: Test under the race detector
+        env:
+          BKD_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/bkdtest?sslmode=disable
+        run: go test ./... -race -count=1
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -20
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build static binary
+        run: make build
+
+      # A dynamically linked binary would defeat the whole deployment story,
+      # so this is asserted rather than assumed.
+      - name: Assert the binary is static
+        run: |
+          file bin/bkd
+          if ! file bin/bkd | grep -q "statically linked"; then
+            echo "bin/bkd is not statically linked"
+            exit 1
+          fi
+
+      - name: Smoke test the CLI
+        run: |
+          ./bin/bkd version
+          ./bin/bkd --help
+
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: gosec
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude-generated ./...
+
+  shell:
+    name: Shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck deploy/install.sh

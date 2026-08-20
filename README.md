@@ -19,8 +19,8 @@ Early development. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase plan.
 
 | Phase | Scope | State |
 |---|---|---|
-| 0 | Foundations: config, storage, build, deploy | in progress |
-| 1 | Identity & encrypted credential vault | vault complete |
+| 0 | Foundations: config, storage, build, deploy | **complete** |
+| 1 | Identity & encrypted credential vault | vault complete; auth next |
 | 2 | SSH terminal | not started |
 | 3 | SFTP file transfer | not started |
 | 4 | Import / export (SecureCRT, PuTTY, OpenSSH) | not started |

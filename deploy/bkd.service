@@ -1,0 +1,74 @@
+[Unit]
+Description=Bridgekeeper — browser-based SSH/SFTP client
+Documentation=https://github.com/mrbuttshooter/SecureCRT
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=bkd
+Group=bkd
+ExecStart=/usr/local/bin/bkd serve --config /etc/bkd/config.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Graceful shutdown: bkd stops accepting connections, drains in-flight
+# requests, then zeroes every unwrapped key it holds. Give it room to finish;
+# a SIGKILL here would leave key material in a core dump.
+KillSignal=SIGTERM
+TimeoutStopSec=45s
+
+# --- Sandboxing -----------------------------------------------------------
+# This service opens outbound SSH connections on behalf of logged-in users and
+# holds their decrypted keys in memory. It is a high-value target, so it is
+# confined tightly.
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+# Blocks a memory-corruption bug from being escalated into code execution.
+MemoryDenyWriteExecute=yes
+
+# The only paths the service may write to.
+ReadWritePaths=/var/lib/bkd
+StateDirectory=bkd
+StateDirectoryMode=0700
+
+# Outbound SSH/Telnet plus the local Postgres socket. AF_NETLINK is required
+# for DNS resolution on some systems.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @cpu-emulation
+
+# A terminal session is one or more file descriptors per tab; 50 engineers
+# with 10 tabs each plus SFTP transfers exceeds the default limit.
+LimitNOFILE=65536
+
+# Keys must never reach a swap file or a core dump.
+LimitCORE=0
+
+# --- Secrets --------------------------------------------------------------
+# Prefer a systemd credential over a plain file: it is unwrapped into a
+# tmpfs readable only by this unit. To use it, set
+#   BKD_MASTER_KEY_PATH=%d/master-key
+# and uncomment the line below.
+# LoadCredential=master-key:/etc/bkd/master.key
+
+[Install]
+WantedBy=multi-user.target

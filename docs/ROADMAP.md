@@ -1,0 +1,83 @@
+# Roadmap
+
+Each phase ends in working, tested software. Nothing is stubbed.
+
+Phases 0–4 together are the point at which the team can stop using SecureCRT:
+a working terminal, file transfer, and a migration path in and out. Everything
+after that is additive and shippable on its own.
+
+## Phase 0 — Foundations ✅
+
+Repo scaffold, `Makefile`, config loader with validation, portable schema and
+migration runner, structured logging, health endpoints, hardened systemd unit,
+install script, CI.
+
+## Phase 1 — Identity and vault (vault complete)
+
+- [x] Envelope encryption, key cache, master key handling
+- [ ] Local accounts, Argon2id login passwords
+- [ ] TOTP MFA with recovery codes
+- [ ] Access and refresh tokens, server-side revocation
+- [ ] Credential CRUD; in-app key generation (ed25519 / RSA-4096 / ECDSA)
+- [ ] Rate limiting and account lockout
+
+## Phase 2 — SSH terminal
+
+WebSocket ↔ SSH PTY bridge; xterm.js with the WebGL renderer; true colour,
+UTF-8, mouse reporting, bracketed paste, configurable scrollback; tabs and
+split panes; session tree with nested folders, drag-and-drop and inherited
+folder defaults; host key verification UI; keyboard-interactive auth;
+keepalive, retry, and reconnect with server-side session survival.
+
+## Phase 3 — SFTP
+
+Dual-pane browser, drag-and-drop transfer, recursive directories, resumable
+transfers, queue and progress UI, in-browser file editor, chmod/chown,
+transfers over the same SSH connection as the terminal tab.
+
+## Phase 4 — Import and export
+
+**Import:** SecureCRT config folders and `.ini` sessions *including saved
+passwords*, PuTTY sessions and `.ppk` keys, `~/.ssh/config` with OpenSSH keys,
+CSV/spreadsheet host lists. Preview before anything is written.
+
+**Export:** a full-fidelity `.bkbundle` encrypted under a passphrase given at
+export time; plus `~/.ssh/config`, SecureCRT `.ini` (to go back), PuTTY `.reg`,
+JSON and CSV. Plaintext export is gated behind the vault passphrase, an
+explicit confirmation and a critical audit event, and admins can disable it.
+
+Definition of done includes a round-trip test: export → wipe → import on a
+second instance → byte-identical sessions, key fingerprints and passwords.
+
+## Phase 5 — Tunnels and jump hosts
+
+Proxy-jump chains of arbitrary depth with per-hop credentials, local and
+remote port forwarding, dynamic SOCKS5, X11 forwarding, agent forwarding with
+per-session opt-in, tunnel manager UI.
+
+## Phase 6 — Telnet, serial and console servers
+
+Telnet with full option negotiation (NAWS, TTYPE, ECHO, SGA). Serial over
+`/dev/ttyUSB*` — which only works where the server is physically cabled to the
+device, so it suits a lab box rather than the central instance. Console server
+support (Opengear, Lantronix) covers the remote case and is more broadly
+useful.
+
+## Phase 7 — Power-user features
+
+Broadcast input to many tabs at once; parameterised command snippets, personal
+and team-shared; triggers and expect automation in a sandboxed JS runtime;
+keyword highlighting; session transcript logging; scrollback search.
+
+## Phase 8 — Enterprise
+
+OIDC and SAML SSO, LDAP/AD group sync, RBAC with per-folder and per-host
+grants, shared team credentials, session recording in asciinema format with a
+web player, audit export to SIEM, admin dashboard with live view and forced
+disconnect, org-wide policy enforcement.
+
+## Phase 9 — Hardening and operations
+
+Full security review, WebAuthn, backup and restore tooling including the master
+key, Prometheus metrics, graceful drain on upgrade, load testing, HA notes,
+operator runbook.

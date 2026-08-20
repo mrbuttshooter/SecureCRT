@@ -37,16 +37,36 @@ type AAD struct {
 	FieldName string
 }
 
+// MaxAADComponent bounds each AAD component.
+//
+// These are identifiers — a scope name, a UUID, a field name — so 1 KiB is
+// generous. The bound is a correctness requirement, not just hygiene: the
+// length prefix below is 32 bits, and a component long enough to wrap that
+// counter would let two different identities encode identically, which is
+// precisely the collision the prefixing exists to prevent.
+const MaxAADComponent = 1024
+
+// ErrAADTooLong means an AAD component exceeded MaxAADComponent.
+var ErrAADTooLong = errors.New("vault: AAD component exceeds the maximum length")
+
 // bytes serialises the AAD unambiguously.
 //
 // Each component is length-prefixed rather than delimiter-joined. Naive
 // concatenation would let ("ab", "c") and ("a", "bc") produce identical AAD,
 // which is exactly the kind of collision an attacker would hunt for.
+//
+// Callers must have run Validate first, which enforces MaxAADComponent; the
+// panic below is unreachable in normal operation and exists so that a future
+// code path bypassing Validate fails loudly rather than silently producing a
+// forgeable encoding.
 func (a AAD) bytes() []byte {
-	parts := []string{a.Scope, a.OwnerID, a.RecordID, a.FieldName}
+	parts := [...]string{a.Scope, a.OwnerID, a.RecordID, a.FieldName}
 
 	n := 1 // version byte
 	for _, p := range parts {
+		if len(p) > MaxAADComponent {
+			panic("vault: AAD component exceeds MaxAADComponent; Validate was not called")
+		}
 		n += 4 + len(p)
 	}
 
@@ -54,7 +74,8 @@ func (a AAD) bytes() []byte {
 	buf = append(buf, EnvelopeVersion)
 	for _, p := range parts {
 		var l [4]byte
-		binary.BigEndian.PutUint32(l[:], uint32(len(p)))
+		// Safe: bounded by MaxAADComponent above, far below math.MaxUint32.
+		binary.BigEndian.PutUint32(l[:], uint32(len(p))) // #nosec G115
 		buf = append(buf, l[:]...)
 		buf = append(buf, p...)
 	}
@@ -62,13 +83,22 @@ func (a AAD) bytes() []byte {
 }
 
 // Validate rejects an AAD that fails to identify anything, which would defeat
-// the binding it exists to provide.
+// the binding it exists to provide, or whose components are long enough to
+// threaten the length-prefix encoding.
 func (a AAD) Validate() error {
 	if a.Scope == "" {
 		return errors.New("vault: AAD scope must not be empty")
 	}
 	if a.OwnerID == "" {
 		return errors.New("vault: AAD owner must not be empty")
+	}
+	for name, p := range map[string]string{
+		"scope": a.Scope, "owner": a.OwnerID,
+		"record": a.RecordID, "field": a.FieldName,
+	} {
+		if len(p) > MaxAADComponent {
+			return fmt.Errorf("%w: %s is %d bytes, limit is %d", ErrAADTooLong, name, len(p), MaxAADComponent)
+		}
 	}
 	return nil
 }

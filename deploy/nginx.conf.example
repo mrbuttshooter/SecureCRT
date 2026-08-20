@@ -1,0 +1,65 @@
+# nginx front end for bkd.
+#
+# bkd binds to loopback and speaks plain HTTP; this is where TLS terminates
+# and where HSTS is set. Obtain certificates with certbot or your own CA.
+
+upstream bkd {
+    server 127.0.0.1:8443;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name bridgekeeper.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name bridgekeeper.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/bridgekeeper.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/bridgekeeper.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_stapling        on;
+    ssl_stapling_verify on;
+
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+
+    # File transfers can be large; let bkd enforce its own limits.
+    client_max_body_size 0;
+
+    location / {
+        proxy_pass http://bkd;
+        proxy_http_version 1.1;
+
+        # WebSocket upgrade for terminal sessions.
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # A terminal is idle whenever the user is reading rather than typing.
+        # The default 60s would disconnect them mid-thought.
+        proxy_read_timeout  3600s;
+        proxy_send_timeout  3600s;
+
+        # Terminal output must reach the browser immediately.
+        proxy_buffering off;
+    }
+}
+
+# Required by the Connection header above; place in the http{} block.
+# map $http_upgrade $connection_upgrade {
+#     default upgrade;
+#     ''      close;
+# }

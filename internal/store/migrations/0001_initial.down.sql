@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS audit_events;
+DROP TABLE IF EXISTS auth_sessions;
+DROP TABLE IF EXISTS known_hosts;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS folders;
+DROP TABLE IF EXISTS credentials;
+DROP TABLE IF EXISTS team_members;
+DROP TABLE IF EXISTS teams;
+DROP TABLE IF EXISTS users;

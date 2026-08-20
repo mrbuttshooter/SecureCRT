@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -254,5 +255,54 @@ func TestSealHandlesEmptyPlaintext(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("want empty plaintext, got %q", got)
+	}
+}
+
+// TestAADRejectsOversizedComponents guards the length-prefix encoding. The
+// prefix is 32 bits, so a component long enough to wrap that counter could
+// make two different identities encode identically — the exact collision the
+// prefixing exists to prevent. Validate bounds every component well below
+// that, and Seal and Open both call Validate first.
+func TestAADRejectsOversizedComponents(t *testing.T) {
+	key := mustKey(t)
+	oversized := strings.Repeat("a", MaxAADComponent+1)
+
+	cases := map[string]AAD{
+		"scope":  {Scope: oversized, OwnerID: "alice"},
+		"owner":  {Scope: "credential", OwnerID: oversized},
+		"record": {Scope: "credential", OwnerID: "alice", RecordID: oversized},
+		"field":  {Scope: "credential", OwnerID: "alice", FieldName: oversized},
+	}
+
+	for name, aad := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := aad.Validate(); !errors.Is(err, ErrAADTooLong) {
+				t.Fatalf("Validate: want ErrAADTooLong, got %v", err)
+			}
+			if _, err := Seal(key, aad, []byte("x")); !errors.Is(err, ErrAADTooLong) {
+				t.Fatalf("Seal: want ErrAADTooLong, got %v", err)
+			}
+			if _, err := Open(key, aad, Envelope{Version: EnvelopeVersion}); !errors.Is(err, ErrAADTooLong) {
+				t.Fatalf("Open: want ErrAADTooLong, got %v", err)
+			}
+		})
+	}
+}
+
+func TestAADAcceptsMaximumLengthComponents(t *testing.T) {
+	key := mustKey(t)
+	atLimit := strings.Repeat("a", MaxAADComponent)
+	aad := AAD{Scope: "credential", OwnerID: atLimit, RecordID: atLimit, FieldName: atLimit}
+
+	env, err := Seal(key, aad, []byte("secret"))
+	if err != nil {
+		t.Fatalf("a component exactly at the limit must be accepted: %v", err)
+	}
+	got, err := Open(key, aad, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "secret" {
+		t.Fatalf("got %q", got)
 	}
 }
