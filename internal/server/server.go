@@ -22,6 +22,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/users"
 	"github.com/mrbuttshooter/securecrt/internal/vault"
+	"github.com/mrbuttshooter/securecrt/internal/web"
 )
 
 // Server holds the long-lived components of a running bkd process.
@@ -333,6 +334,24 @@ func (s *Server) routes() http.Handler {
 		fmt.Fprint(w, `{"status":"ready"}`+"\n")
 	})
 
+	// The frontend is the fallback for everything not claimed above, so a
+	// browser reload on a client-side route serves the app rather than 404ing.
+	if handler, err := web.Handler(); err == nil {
+		mux.Handle("/", handler)
+	} else {
+		s.log.Warn("no frontend embedded in this binary; only the API is served",
+			"reason", err)
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprintln(w, "bkd is running, but no frontend was built into this binary.")
+			fmt.Fprintln(w, "Run 'make web' before 'make build', or use the API directly.")
+		})
+	}
+
 	return securityHeaders(mux)
 }
 
@@ -344,6 +363,10 @@ func (s *Server) routes() http.Handler {
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
+		// img-src includes data: because the authenticator QR code is rendered
+		// in the browser to a data URI rather than fetched from the server —
+		// the TOTP secret should not need a second round trip just to become
+		// an image.
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; script-src 'self'; style-src 'self'; "+
 				"img-src 'self' data:; font-src 'self'; connect-src 'self'; "+

@@ -1,0 +1,7 @@
+# Keeps this directory present in a fresh checkout.
+#
+# internal/web/web.go embeds it with //go:embed, which is a compile-time
+# directive: without the directory the package does not build, so
+# "go build ./..." would fail on a clone that had not run "make web".
+#
+# The built frontend is copied here by "make web" and is not committed.

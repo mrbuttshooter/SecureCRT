@@ -2,6 +2,9 @@
 /bin/
 /dist/
 web/dist/
+# Staged copy of the built frontend, produced by "make web".
+internal/web/dist/*
+!internal/web/dist/.gitkeep
 *.test
 coverage.out
 
@@ -20,6 +23,8 @@ master.key
 # Node
 node_modules/
 .pnpm-store/
+web/test-results/
+web/playwright-report/
 
 # Editors
 .vscode/

@@ -131,6 +131,44 @@ jobs:
       - name: gosec
         run: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude-generated ./...
 
+  e2e:
+    name: Browser end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Build frontend and binary
+        run: make release
+
+      - name: Install Playwright browsers
+        run: cd web && npx playwright install --with-deps chromium
+
+      # Provisions a fresh instance per run, so the suite is repeatable.
+      - name: Run the browser suite
+        run: ./scripts/e2e.sh
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: web/test-results/
+          retention-days: 7
+
   shell:
     name: Shell
     runs-on: ubuntu-latest
@@ -139,4 +177,4 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck deploy/install.sh
+          shellcheck deploy/install.sh scripts/e2e.sh
