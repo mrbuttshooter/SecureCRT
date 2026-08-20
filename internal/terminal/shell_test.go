@@ -239,3 +239,69 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition never became true")
 }
+
+// TestAttachingAndDetachingWhileOutputFlowsDoesNotPanic reproduces a race that
+// survived three phases.
+//
+// pump used to read t.attached under the lock, release it, and then send. A
+// browser detaching in that window closes the channel the send is about to
+// use — and a send on a closed channel is a panic, not an error, which takes
+// the whole server with it rather than one terminal.
+//
+// The window is microseconds wide, so this hammers it: continuous output
+// against continuous attach and detach. It passed against the broken version
+// often enough to be useless without -race, and fails reliably with it.
+func TestAttachingAndDetachingWhileOutputFlowsDoesNotPanic(t *testing.T) {
+	m := quietManager(t)
+	shell := newFakeShell()
+
+	term, err := m.Open(shell, nil, OpenParams{UserID: "u1", Label: "busy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A device talking continuously, until the attach loop below is done.
+	done := make(chan struct{})
+	var writer sync.WaitGroup
+	writer.Add(1)
+	go func() {
+		defer writer.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			if _, err := shell.fromFarEnd.Write([]byte("output\r\n")); err != nil {
+				return
+			}
+		}
+	}()
+
+	// A browser that cannot make up its mind, on this goroutine so the
+	// writer's stop signal cannot deadlock against its own wait.
+	for range 2000 {
+		attachment, err := term.Attach()
+		if err != nil {
+			break
+		}
+		// Drained, because a browser that never reads is a different test —
+		// this one is about the channel being closed underneath a send.
+		go func(ch <-chan []byte) {
+			for range ch {
+			}
+		}(attachment.Output)
+		term.Detach()
+	}
+
+	close(done)
+
+	// The pipe is closed to release a writer parked mid-Write, which happens
+	// whenever the loop above finishes between two of pump's reads.
+	_ = shell.fromFarEnd.Close()
+	writer.Wait()
+
+	if err := m.CloseTerminal("u1", term.ID); err != nil {
+		t.Fatalf("closing: %v", err)
+	}
+}

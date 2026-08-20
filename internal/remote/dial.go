@@ -77,6 +77,11 @@ const (
 	// does not.
 	CodeConflict = "conflict"
 
+	// CodeProtocolUnsupported is a feature that cannot exist for this
+	// protocol, as opposed to one an operator has switched off. Nobody can
+	// enable SFTP over telnet; the distinction saves somebody an email.
+	CodeProtocolUnsupported = "protocol_unsupported"
+
 	CodeInternal = "internal_error"
 )
 
@@ -234,10 +239,22 @@ func (d *Dialer) Acquire(ctx context.Context, p Params) (*Connection, error) {
 		return nil, &Error{Code: CodeInternal, Message: "The saved connection could not be read.", Err: err}
 	}
 
+	// Everything reached through the pool is SSH, and that is not a gap to
+	// fill later: SFTP and tunnels are channels on a multiplexed connection,
+	// and telnet and serial have no channels. There is nothing to open.
+	//
+	// Reported as a refusal with a reason rather than a bare "not supported",
+	// because the person asking is looking at a file browser that opened
+	// happily for the switch next to this one and wants to know what is
+	// different about this one.
 	if resolved.Protocol != sessions.ProtocolSSH {
 		return nil, &Error{
-			Code:    CodeInternal,
-			Message: fmt.Sprintf("%s connections are not supported yet.", resolved.Protocol),
+			Code: CodeProtocolUnsupported,
+			Message: fmt.Sprintf(
+				"This is a %s connection, and %s carries only a terminal — "+
+					"file transfer and tunnels need SSH, which multiplexes "+
+					"several channels over one connection.",
+				resolved.Protocol, resolved.Protocol),
 		}
 	}
 

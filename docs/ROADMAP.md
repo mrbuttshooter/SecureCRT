@@ -193,15 +193,46 @@ Two more things are deliberately absent:
   accept inbound traffic on a client's behalf, which is a second listening
   surface for a use case that has no place in reaching network equipment.
 
-## Phase 6 — Telnet, serial and console servers — next
+## Phase 6 — Telnet, serial and console servers ✅
 
-Telnet with full option negotiation (NAWS, TTYPE, ECHO, SGA). Serial over
-`/dev/ttyUSB*` — which only works where the server is physically cabled to the
-device, so it suits a lab box rather than the central instance. Console server
-support (Opengear, Lantronix) covers the remote case and is more broadly
-useful.
+- [x] Telnet with option negotiation by RFC 1143 — ECHO, SUPPRESS-GO-AHEAD,
+      TERMINAL-TYPE, NAWS and BINARY, with everything else refused out loud
+- [x] Logon automation: expect/send steps with the password substituted from
+      the vault at connect time, never stored in the settings document
+- [x] Serial over termios, Linux only, behind a policy switch **and** a
+      device allowlist
+- [x] One wire, one terminal — a serial line is claimed exclusively, and the
+      refusal says whether it is yours or somebody else's
+- [x] Console server generation: one appliance becomes a folder of lines,
+      previewed before anything is written
+- [x] The terminal decoupled from SSH, so all three protocols share the
+      replay buffer, reattachment and the abandoned-session reaper
+- [x] [`docs/PROTOCOLS.md`](PROTOCOLS.md)
 
-## Phase 7 — Power-user features
+**Telnet is on by default and serial is off**, which is not an inconsistency.
+Telnet is plaintext, but the equipment that needs it cannot do anything else,
+and refusing it does not make those devices go away — it makes people reach
+them with something that has no audit log. So the cost is made visible
+instead: the tab is marked, and every connection is recorded with
+`encrypted=false`. Serial is off because it only does anything where the
+server is physically cabled to the device, and because the path comes from a
+user: without `serial.allowed_devices`, "open this path" is an arbitrary-file
+read on a machine holding everyone's vault.
+
+**What SSH-only features do now:** file transfer and tunnels refuse telnet and
+serial with a reason rather than a 500. They are channels on a multiplexed
+connection, and neither of the other two protocols has channels — there is
+nothing to open, and nobody can enable it.
+
+Named in the original scope and deliberately narrowed:
+
+- **Console servers are not a protocol.** They are telnet or SSH to a port
+  derived from a line number, so what this builds is the arithmetic and the
+  tedium — with the vendor port bases treated as the editable defaults they
+  are rather than as laws, because every one of these appliances lets somebody
+  change them.
+
+## Phase 7 — Power-user features — next
 
 Broadcast input to many tabs at once; parameterised command snippets, personal
 and team-shared; triggers and expect automation in a sandboxed JS runtime;

@@ -166,6 +166,14 @@ func (a *API) writeOpenError(w http.ResponseWriter, r *http.Request, err error, 
 		// prove who it is. 409 says "the state on the other side conflicts
 		// with what you asked for", which is exactly the situation.
 		status = http.StatusConflict
+	case remote.CodeProtocolUnsupported:
+		// A telnet connection has no file transfer and never will, so this
+		// is the request being wrong rather than anything failing.
+		status = http.StatusBadRequest
+	case remote.CodeProtocolDisabled:
+		status = http.StatusForbidden
+	case remote.CodeConflict:
+		status = http.StatusConflict
 	}
 
 	if remoteErr.Code == remote.CodeHostKeyChanged {

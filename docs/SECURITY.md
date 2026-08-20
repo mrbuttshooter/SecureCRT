@@ -365,6 +365,34 @@ detail key containing a forbidden substring — `password`, `secret`,
 `private_key` and the rest — which is why the field above is `keys_offered`
 and not something that reads more naturally.
 
+## Telnet and serial
+
+The reasoning for both, and what each costs, is in
+[`docs/PROTOCOLS.md`](PROTOCOLS.md). Three properties belong here:
+
+**Telnet is plaintext and says so.** It is on by default because the equipment
+that needs it cannot do anything else, and refusing it moves people to tools
+with no audit log rather than to SSH. The mitigation is visibility, not
+prohibition: the tab is marked, and every connection is recorded with
+`encrypted=false` at the moment it is made rather than inferred later.
+`policy.allow_telnet: false` turns it off for an organisation that has
+finished retiring it.
+
+**A serial device path is user input.** Without `serial.allowed_devices`,
+"open this path and stream it to my browser" is an arbitrary-file read on a
+machine holding every engineer's encrypted vault — and a character-device
+check does not save it, because `/dev/mem` is one. So the feature is off by
+default, the allowlist has no default, it is matched after symbolic links are
+resolved, and the device type is checked on the descriptor after opening
+rather than on the path before.
+
+**A logon sequence stores a placeholder, never a password.** Settings are an
+unencrypted JSON document. `%PASSWORD%` is substituted at connect time from
+the credential the connection already names, and the audit record carries the
+number of steps and never their content. Escapes are resolved on the template
+before the value is substituted, so a password containing `` cannot become a
+carriage return followed by a command.
+
 ## Tunnels
 
 The reasoning behind each tunnel shape, and what each one exposes, is in

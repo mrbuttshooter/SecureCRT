@@ -6,6 +6,7 @@ import {
 import { SessionTree } from './SessionTree'
 import { SessionEditor } from './SessionEditor'
 import { FolderEditor } from './FolderEditor'
+import { ConsoleServer } from './ConsoleServer'
 import { TerminalPane } from '../terminal/TerminalPane'
 import { THEME_LABELS, isThemeName, type ThemeName } from '../terminal/themes'
 
@@ -23,6 +24,7 @@ type Panel =
   | { kind: 'none' }
   | { kind: 'session'; session: SavedSession | null; folderId: string }
   | { kind: 'folder'; folder: Folder | null; parentId: string }
+  | { kind: 'console'; folderId: string }
 
 const PREFS_KEY = 'bkd.terminal.prefs'
 
@@ -220,6 +222,9 @@ export function Workspace({ active }: { active: boolean }) {
             <button onClick={() => setPanel({ kind: 'folder', folder: null, parentId: '' })}>
               New folder
             </button>
+            <button onClick={() => setPanel({ kind: 'console', folderId: '' })}>
+              Console server
+            </button>
           </div>
         </div>
 
@@ -260,7 +265,13 @@ export function Workspace({ active }: { active: boolean }) {
             <h3>{selected.name}</h3>
             <p className="muted">
               {selected.username ? `${selected.username}@` : ''}
-              {selected.hostname}:{selected.effective_port} · {selected.protocol}
+              {selected.protocol === 'serial'
+                ? selected.hostname
+                : `${selected.hostname}:${selected.effective_port}`}
+              {' · '}{selected.protocol}
+              {selected.protocol !== 'ssh' && (
+                <> · <span className="tag warn-tag">not encrypted</span></>
+              )}
             </p>
             <div className="row">
               <button onClick={() => connect(selected)}>Connect</button>
@@ -329,6 +340,14 @@ export function Workspace({ active }: { active: boolean }) {
             session={panel.session}
             folderId={panel.folderId}
             onSaved={() => { setPanel({ kind: 'none' }); void loadTree() }}
+            onCancel={() => setPanel({ kind: 'none' })}
+          />
+        )}
+
+        {panel.kind === 'console' && (
+          <ConsoleServer
+            folderId={panel.folderId}
+            onCreated={() => { setPanel({ kind: 'none' }); void loadTree() }}
             onCancel={() => setPanel({ kind: 'none' })}
           />
         )}

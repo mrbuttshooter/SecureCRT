@@ -487,3 +487,36 @@ func TestPlanningAConsoleServerWritesNothing(t *testing.T) {
 		t.Errorf("planning created %d connections", len(after)-len(before))
 	}
 }
+
+// TestFileTransferAndTunnelsRefuseTelnetWithAReason.
+//
+// SFTP and tunnels are channels on a multiplexed connection. Telnet has no
+// channels, so there is nothing to open — and the person asking is looking at
+// a file browser that opened happily for the switch next to this one and
+// wants to know what is different about this one. A 500 tells them nothing.
+func TestFileTransferAndTunnelsRefuseTelnetWithAReason(t *testing.T) {
+	h := signedInWithVault(t, allowTunnelListeners)
+	device := startTelnetDevice(t)
+	sessionID := h.savedTelnetHost(t, "old-switch", device.Host, device.Port)
+
+	t.Run("the file browser", func(t *testing.T) {
+		resp, body := h.post("/api/files/sessions?session="+sessionID, nil)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("= %d, want 400: %v", resp.StatusCode, body)
+		}
+		failure, _ := body["error"].(map[string]any)
+		message, _ := failure["message"].(string)
+		if !strings.Contains(message, "SSH") {
+			t.Errorf("the refusal does not explain what is missing: %q", message)
+		}
+	})
+
+	t.Run("a tunnel", func(t *testing.T) {
+		resp, body := h.post("/api/tunnels", map[string]any{
+			"session_id": sessionID, "kind": "local", "host": "10.0.0.1", "port": 443,
+		})
+		if resp.StatusCode == http.StatusInternalServerError {
+			t.Fatalf("= 500, want a refusal with a reason: %v", body)
+		}
+	})
+}

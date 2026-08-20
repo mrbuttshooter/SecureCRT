@@ -321,14 +321,24 @@ func (t *Terminal) pump() {
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
 
+			// The send happens under the lock, not after it.
+			//
+			// Reading the channel out and sending once the mutex is released
+			// looks harmless and is not: Detach and close both close this
+			// channel while holding the lock, so a browser going away between
+			// the read and the send is a send on a closed channel — which is
+			// a panic, not an error, and takes the process with it. The
+			// window is microseconds wide, which is why it survived three
+			// phases and only ever appeared under -race.
+			//
+			// Holding the lock across the send is safe precisely because the
+			// send cannot block: the default arm below means this never
+			// waits, so the mutex is held for a copy and no longer.
 			t.mu.Lock()
 			t.replay.Write(chunk)
-			attached := t.attached
-			t.mu.Unlock()
-
-			if attached != nil {
+			if t.attached != nil {
 				select {
-				case attached <- chunk:
+				case t.attached <- chunk:
 				default:
 					// The browser is not keeping up. Dropping the frame is
 					// better than blocking this loop, which would stall the
@@ -339,6 +349,7 @@ func (t *Terminal) pump() {
 						"terminal", t.ID, "bytes", n)
 				}
 			}
+			t.mu.Unlock()
 		}
 
 		if err != nil {

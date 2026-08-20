@@ -13,7 +13,7 @@ bkd  ── one static Go binary, systemd unit, unprivileged user
       ├── internal/api        REST handlers, middleware, the WebSocket bridges
       ├── internal/vault      envelope encryption, in-memory key cache
       ├── internal/auth       Argon2id, TOTP, tokens, OIDC/SAML
-      ├── internal/proto      sshx · sftpx · tunnel
+      ├── internal/proto      sshx · sftpx · telnetx · serialx · tunnel
       ├── internal/remote     the shared connection pool and the dial path
       ├── internal/terminal   live shells, replay buffers, reattachment
       ├── internal/files      SFTP sessions and the transfer engine

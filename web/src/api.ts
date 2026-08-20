@@ -242,6 +242,46 @@ export interface Settings {
    * inside it, including hosts added later.
    */
   agent_forward_credentials?: string[] | null
+
+  /**
+   * What to type at a device's own login prompt, for the protocols that have
+   * no authentication of their own.
+   *
+   * Use %USERNAME% and %PASSWORD% rather than literal values: the password is
+   * substituted from the credential at connect time, and a literal one here
+   * would be stored in the clear.
+   */
+  logon_steps?: LogonStep[] | null
+
+  serial_baud?: number | null
+  serial_data_bits?: number | null
+  serial_stop_bits?: number | null
+  serial_parity?: string | null
+  serial_flow?: string | null
+}
+
+export interface LogonStep {
+  /** Case-insensitive substring, with "|" alternatives. Empty sends at once. */
+  expect: string
+  /** Understands %USERNAME%, %PASSWORD% and the escapes \r, \n, \t. */
+  send: string
+}
+
+export interface ConsoleProfile {
+  id: string
+  name: string
+  telnet_base: number
+  ssh_base: number
+  first_line: number
+  note: string
+}
+
+export interface ConsolePlan {
+  profile: ConsoleProfile
+  protocol: string
+  hostname: string
+  lines: { line: number; name: string; port: number }[]
+  warnings?: string[]
 }
 
 export interface Folder {
@@ -300,8 +340,13 @@ export interface LiveTerminal {
   id: string
   session_id?: string
   label: string
+  protocol: 'ssh' | 'telnet' | 'serial'
   host: string
   port: number
+  /** The serial port's path, for a serial session. */
+  device?: string
+  /** False for telnet and serial — shown, so nobody has to remember. */
+  encrypted: boolean
   username?: string
   created_at: string
   attached: boolean

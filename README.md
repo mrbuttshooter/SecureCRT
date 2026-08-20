@@ -23,7 +23,8 @@ whenever you want to. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase
 plan and what each completed phase actually contains,
 [`docs/MIGRATING.md`](docs/MIGRATING.md) for moving a team over, and
 [`docs/TUNNELS.md`](docs/TUNNELS.md) for jump hosts, port forwarding and agent
-forwarding.
+forwarding, and [`docs/PROTOCOLS.md`](docs/PROTOCOLS.md) for telnet, serial
+lines and console servers.
 
 | Phase | Scope | State |
 |---|---|---|
@@ -33,8 +34,8 @@ forwarding.
 | 3 | SFTP file transfer | **complete** |
 | 4 | Import / export (SecureCRT, PuTTY, OpenSSH) | **complete** |
 | 5 | Tunnels & jump hosts | **complete** |
-| 6 | Telnet, serial & console servers | next |
-| 7 | Power-user features (broadcast, snippets, triggers) | not started |
+| 6 | Telnet, serial & console servers | **complete** |
+| 7 | Power-user features (broadcast, snippets, triggers) | next |
 | 8 | Enterprise (RBAC, session recording) | SSO delivered early, in Phase 1 |
 | 9 | Hardening & operations | not started |
 

@@ -28,13 +28,14 @@ SERVER_PID=""
 SSHD_PID=""
 SSHD2_PID=""
 BASTION_PID=""
+TELNETD_PID=""
 
 SSH_USER="tester"
 SSH_PASSWORD="a throwaway ssh password"
 
 # shellcheck disable=SC2317  # called by the EXIT trap, which shellcheck cannot see
 cleanup() {
-    for pid in "$SERVER_PID" "$SSHD_PID" "$SSHD2_PID" "$BASTION_PID"; do
+    for pid in "$SERVER_PID" "$SSHD_PID" "$SSHD2_PID" "$BASTION_PID" "$TELNETD_PID"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -107,7 +108,7 @@ EOF
 # experience or on an empty list would then depend on which file happened to
 # run first. An earlier version did, and broke the moment a third spec was
 # added.
-for account in admin terminal files transfer tunnels; do
+for account in admin terminal files transfer tunnels protocols; do
     echo "a very long admin password" | \
         ./bin/bkd admin create-user --config "$WORKDIR/config.yaml" \
             -email "${account}@example.com" -name "Test ${account}" -admin >/dev/null
@@ -159,6 +160,12 @@ export BKD_E2E_PUTTY_ZIP="$WORKDIR/putty.zip"
 info "building the test SSH server"
 go build -tags tools -o "$WORKDIR/testsshd" ./tools/testsshd
 
+# And a telnet device, which negotiates the way a switch does and demands a
+# login — the protocol has no authentication of its own, so proving telnet
+# works means proving the logon sequence types the credential in.
+info "building the test telnet device"
+go build -tags tools -o "$WORKDIR/testtelnetd" ./tools/testtelnetd
+
 start_sshd() {
     local name="$1"
     local logfile="$WORKDIR/${name}.log"
@@ -198,6 +205,31 @@ BASTION_PID="$(start_sshd bastion)"
 SSH_PORT="$(cat "$WORKDIR/sshd.port")"
 SSH_PORT_2="$(cat "$WORKDIR/sshd2.port")"
 BASTION_PORT="$(cat "$WORKDIR/bastion.port")"
+
+info "starting the test telnet device"
+"$WORKDIR/testtelnetd" \
+    -addr 127.0.0.1:0 \
+    -user "$SSH_USER" \
+    -password "$SSH_PASSWORD" \
+    -port-file "$WORKDIR/telnetd.port" > "$WORKDIR/telnetd.log" 2>&1 &
+TELNETD_PID=$!
+
+for _ in $(seq 1 80); do
+    [[ -s "$WORKDIR/telnetd.port" ]] && break
+    if ! kill -0 "$TELNETD_PID" 2>/dev/null; then
+        echo "the test telnet device exited during startup:" >&2
+        cat "$WORKDIR/telnetd.log" >&2
+        exit 1
+    fi
+    sleep 0.25
+done
+
+if [[ ! -s "$WORKDIR/telnetd.port" ]]; then
+    echo "the test telnet device never reported a port:" >&2
+    cat "$WORKDIR/telnetd.log" >&2
+    exit 1
+fi
+TELNET_PORT="$(cat "$WORKDIR/telnetd.port")"
 info "test SSH servers on 127.0.0.1:${SSH_PORT}, 127.0.0.1:${SSH_PORT_2}, bastion on 127.0.0.1:${BASTION_PORT}"
 
 info "starting bkd on ${BASE_URL}"
@@ -243,6 +275,7 @@ set +e
     BKD_E2E_SSH_PORT="$SSH_PORT" \
     BKD_E2E_SSH_PORT_2="$SSH_PORT_2" \
     BKD_E2E_BASTION_PORT="$BASTION_PORT" \
+    BKD_E2E_TELNET_PORT="$TELNET_PORT" \
     BKD_E2E_SSH_USER="$SSH_USER" \
     BKD_E2E_SSH_PASSWORD="$SSH_PASSWORD" \
     BKD_E2E_CHROMIUM="${BKD_E2E_CHROMIUM:-}" \
@@ -257,7 +290,8 @@ if [[ $STATUS -ne 0 ]]; then
     echo "--- server log ---" >&2
     cat "$WORKDIR/server.log" >&2
     echo "--- test ssh server logs ---" >&2
-    cat "$WORKDIR/sshd.log" "$WORKDIR/sshd2.log" "$WORKDIR/bastion.log" >&2
+    cat "$WORKDIR/sshd.log" "$WORKDIR/sshd2.log" "$WORKDIR/bastion.log" \
+        "$WORKDIR/telnetd.log" >&2
 fi
 
 exit $STATUS
