@@ -300,6 +300,8 @@ func (a *API) Routes() http.Handler {
 
 		"GET /api/tunnels", "POST /api/tunnels", "DELETE /api/tunnels/{id}",
 		"GET /api/tunnels/config",
+		"GET /api/consoles/profiles", "POST /api/consoles/plan",
+		"POST /api/consoles/apply",
 
 		"GET /api/portability/config", "POST /api/portability/import",
 		"DELETE /api/portability/staged/{id}", "POST /api/portability/export",
@@ -449,6 +451,13 @@ func (a *API) routeAuthenticated(w http.ResponseWriter, r *http.Request) {
 		a.handleListTransfers(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/files/transfers/"):
 		a.handleCancelTransfer(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/consoles/profiles":
+		a.handleConsoleProfiles(w, r)
+	case r.Method == http.MethodPost && path == "/api/consoles/plan":
+		a.handleConsolePlan(w, r)
+	case r.Method == http.MethodPost && path == "/api/consoles/apply":
+		a.handleConsoleApply(w, r)
 
 	case r.Method == http.MethodGet && path == "/api/tunnels/config":
 		a.handleTunnelConfig(w, r)

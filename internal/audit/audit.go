@@ -87,6 +87,11 @@ const (
 	ActionTunnelRemote   Action = "tunnel.remote.opened"
 	ActionAgentForwarded Action = "agent.forwarded"
 
+	// ActionConsoleGenerated records a rack's worth of connections being
+	// created in one go, which is otherwise forty-eight unremarkable
+	// creations that nobody would think to correlate.
+	ActionConsoleGenerated Action = "console.generated"
+
 	// Files. Reads and writes against a managed host are recorded because
 	// "who took a copy of the running configuration, and when" is the first
 	// question asked after an incident.

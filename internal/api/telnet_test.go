@@ -404,3 +404,86 @@ func serveLogin(conn net.Conn) {
 		}
 	}
 }
+
+// TestAConsoleServerBecomesAFolderOfLines, through the API, plan then apply.
+func TestAConsoleServerBecomesAFolderOfLines(t *testing.T) {
+	h := signedInWithVault(t)
+
+	_, folder := h.post("/api/tree/folders", map[string]any{"name": "Rack 3"})
+	folderID, _ := folder["id"].(string)
+
+	body := map[string]any{
+		"profile_id": "opengear",
+		"hostname":   "console-01.example.com",
+		"protocol":   "ssh",
+		"lines":      12,
+		"folder_id":  folderID,
+		"username":   "root",
+	}
+
+	// Plan first: nothing is written until somebody has seen what would be.
+	resp, plan := h.post("/api/consoles/plan", body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("plan = %d: %v", resp.StatusCode, plan)
+	}
+	lines, _ := plan["lines"].([]any)
+	if len(lines) != 12 {
+		t.Fatalf("planned %d lines, want 12", len(lines))
+	}
+
+	_, tree := h.get("/api/tree")
+	before, _ := tree["sessions"].([]any)
+
+	// Then apply.
+	resp, applied := h.post("/api/consoles/apply", body)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("apply = %d: %v", resp.StatusCode, applied)
+	}
+	created, _ := applied["created"].([]any)
+	if len(created) != 12 {
+		t.Fatalf("created %d, want 12", len(created))
+	}
+
+	first, _ := created[0].(map[string]any)
+	if name, _ := first["name"].(string); name != "console-01.example.com line 01" {
+		t.Errorf("first name = %q", name)
+	}
+	if port, _ := first["port"].(float64); port != 3001 {
+		t.Errorf("first port = %v, want 3001", first["port"])
+	}
+
+	last, _ := created[11].(map[string]any)
+	if port, _ := last["port"].(float64); port != 3012 {
+		t.Errorf("last port = %v, want 3012", last["port"])
+	}
+
+	// And they are genuinely in the tree, not merely reported.
+	_, tree = h.get("/api/tree")
+	after, _ := tree["sessions"].([]any)
+	if len(after)-len(before) != 12 {
+		t.Errorf("the tree gained %d connections, want 12", len(after)-len(before))
+	}
+}
+
+// TestPlanningAConsoleServerWritesNothing is the half of "plan then apply"
+// that is easy to get wrong and impossible to notice until somebody has a
+// tree full of connections they only asked to look at.
+func TestPlanningAConsoleServerWritesNothing(t *testing.T) {
+	h := signedInWithVault(t)
+
+	_, tree := h.get("/api/tree")
+	before, _ := tree["sessions"].([]any)
+
+	resp, _ := h.post("/api/consoles/plan", map[string]any{
+		"profile_id": "opengear", "hostname": "con1", "protocol": "ssh", "lines": 48,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("plan = %d", resp.StatusCode)
+	}
+
+	_, tree = h.get("/api/tree")
+	after, _ := tree["sessions"].([]any)
+	if len(after) != len(before) {
+		t.Errorf("planning created %d connections", len(after)-len(before))
+	}
+}
