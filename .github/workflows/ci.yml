@@ -41,6 +41,12 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # The credential tests check our SSH key handling against real
+      # ssh-keygen output. Without it they skip silently, which is worse than
+      # failing: the suite would look green while testing nothing.
+      - name: Install ssh-keygen
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq openssh-client
+
       - name: Verify formatting
         run: |
           unformatted=$(gofmt -l ./cmd ./internal)
