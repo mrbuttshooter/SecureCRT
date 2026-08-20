@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
+	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/store/storetest"
@@ -41,6 +42,18 @@ type sshServer struct {
 	Port    int
 	HostKey ssh.PublicKey
 	server  *gssh.Server
+
+	// auths counts credentials offered. Two terminals on one saved
+	// connection must produce one authentication, not two — the assertion
+	// that connection sharing is real rather than incidental.
+	mu    sync.Mutex
+	auths int
+}
+
+func (s *sshServer) authCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.auths
 }
 
 func startSSHServer(t *testing.T, password string, seed []byte) *sshServer {
@@ -57,9 +70,14 @@ func startSSHServer(t *testing.T, password string, seed []byte) *sshServer {
 		t.Fatal(err)
 	}
 
+	ts := &sshServer{HostKey: signer.PublicKey()}
+
 	srv := &gssh.Server{
 		HostSigners: []gssh.Signer{signer},
 		PasswordHandler: func(_ gssh.Context, given string) bool {
+			ts.mu.Lock()
+			ts.auths++
+			ts.mu.Unlock()
 			return given == password
 		},
 		Handler: func(s gssh.Session) {
@@ -105,7 +123,8 @@ func startSSHServer(t *testing.T, password string, seed []byte) *sshServer {
 		t.Fatal(err)
 	}
 
-	return &sshServer{Host: host, Port: port, HostKey: signer.PublicKey(), server: srv}
+	ts.Host, ts.Port, ts.server = host, port, srv
+	return ts
 }
 
 // --- test fixture -----------------------------------------------------------
@@ -113,6 +132,7 @@ func startSSHServer(t *testing.T, password string, seed []byte) *sshServer {
 type fixture struct {
 	connector *Connector
 	manager   *Manager
+	pool      *remote.Pool
 	sessions  *sessions.Store
 	creds     *credentials.Store
 	hostKeys  *hostkeys.Store
@@ -147,8 +167,13 @@ func newFixture(t *testing.T) *fixture {
 	credStore := credentials.NewStore(db)
 	hkStore := hostkeys.NewStore(db)
 
+	pool := remote.NewPool(quietLogger())
+	t.Cleanup(pool.Close)
+	dialer := remote.NewDialer(pool, sessStore, credStore, hkStore, quietLogger())
+
 	return &fixture{
-		connector: NewConnector(manager, sessStore, credStore, hkStore, quietLogger()),
+		connector: NewConnector(manager, dialer, quietLogger()),
+		pool:      pool,
 		manager:   manager,
 		sessions:  sessStore,
 		creds:     credStore,
@@ -259,6 +284,71 @@ func TestConnectAndRunACommand(t *testing.T) {
 	}
 	if !strings.HasPrefix(prompts[0].Fingerprint, "SHA256:") {
 		t.Errorf("fingerprint = %q", prompts[0].Fingerprint)
+	}
+}
+
+// TestASecondTerminalSharesTheConnection is what makes the file browser cheap
+// and what keeps a device's session limit from being the thing that stops an
+// engineer working.
+//
+// Two terminals on the same saved connection must ride one SSH connection:
+// one TCP session, one authentication, one vty line on equipment that counts
+// them.
+func TestASecondTerminalSharesTheConnection(t *testing.T) {
+	f := newFixture(t)
+	srv := startSSHServer(t, "hunter2", nil)
+	sess := f.savedConnection(t, srv, "hunter2")
+
+	open := func() *Terminal {
+		t.Helper()
+		term, err := f.connector.Connect(context.Background(), ConnectParams{
+			UserID:    f.userID,
+			SessionID: sess.ID,
+			VaultKey:  f.vaultKey,
+			Prompter:  &acceptingPrompter{},
+		})
+		if err != nil {
+			t.Fatalf("Connect: %v", err)
+		}
+		return term
+	}
+
+	first := open()
+	second := open()
+
+	if n := srv.authCount(); n != 1 {
+		t.Errorf("the host authenticated %d times for two terminals, want 1", n)
+	}
+	if n := f.pool.Len(); n != 1 {
+		t.Errorf("%d SSH connections are open for two terminals, want 1", n)
+	}
+
+	// Both must actually work, which is the point of sharing rather than
+	// merely counting.
+	firstView := attach(t, first)
+	firstView.waitFor(t, "READY", 5*time.Second)
+	secondView := attach(t, second)
+	secondView.waitFor(t, "READY", 5*time.Second)
+
+	// Closing one must leave the other alive. Without reference counting this
+	// is where the second terminal would silently die.
+	if err := f.manager.CloseTerminal(f.userID, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.pool.Len(); n != 1 {
+		t.Fatal("closing one terminal closed the shared connection")
+	}
+
+	if err := second.Write([]byte("still here\n")); err != nil {
+		t.Fatalf("the surviving terminal is broken: %v", err)
+	}
+	secondView.waitFor(t, "still here", 5*time.Second)
+
+	if err := f.manager.CloseTerminal(f.userID, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.pool.Len(); n != 0 {
+		t.Errorf("%d connections remain after the last terminal closed", n)
 	}
 }
 

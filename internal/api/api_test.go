@@ -18,6 +18,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
+	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store/storetest"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
@@ -112,9 +113,13 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 	credStore := credentials.NewStore(db)
 	hostKeyStore := hostkeys.NewStore(db)
 
+	pool := remote.NewPool(quiet)
+	t.Cleanup(pool.Close)
+	dialer := remote.NewDialer(pool, sessionTree, credStore, hostKeyStore, quiet)
+
 	terminals := terminal.NewManager(quiet)
 	t.Cleanup(terminals.Close)
-	connector := terminal.NewConnector(terminals, sessionTree, credStore, hostKeyStore, quiet)
+	connector := terminal.NewConnector(terminals, dialer, quiet)
 
 	a, err := New(apiCfg, Deps{
 		DB: db, Users: userStore, Vaults: vaultSvc, Sessions: authSessions,

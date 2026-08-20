@@ -20,6 +20,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
+	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
@@ -47,6 +48,10 @@ type Server struct {
 	// WebSocket connections, which is what lets a browser reconnect to a
 	// shell it left running.
 	terminals *terminal.Manager
+
+	// connections holds the shared SSH connections underneath the terminals
+	// and the file browser.
+	connections *remote.Pool
 }
 
 // New builds a Server: it opens the database, applies migrations if
@@ -162,8 +167,14 @@ func (s *Server) buildAPI(ctx context.Context) error {
 	credentialStore := credentials.NewStore(s.db)
 	hostKeyStore := hostkeys.NewStore(s.db)
 
+	// One pool of SSH connections, shared by terminals and the file browser.
+	// A user with a shell open on a host who then browses its filesystem gets
+	// the connection they already have.
+	s.connections = remote.NewPool(s.log)
+	dialer := remote.NewDialer(s.connections, sessionTree, credentialStore, hostKeyStore, s.log)
+
 	s.terminals = terminal.NewManager(s.log)
-	connector := terminal.NewConnector(s.terminals, sessionTree, credentialStore, hostKeyStore, s.log)
+	connector := terminal.NewConnector(s.terminals, dialer, s.log)
 
 	s.api, err = api.New(apiCfg, api.Deps{
 		DB:          s.db,
@@ -305,11 +316,25 @@ func (s *Server) warnOnRiskyPolicy() {
 	}
 }
 
-// closeResources zeroes key material and closes the database.
+// closeResources ends live sessions, zeroes key material and closes the
+// database.
 //
-// Order matters: keys are cleared before anything else so that a crash during
-// database close still leaves no key material in a core dump.
+// The order is deliberate:
+//
+//  1. Terminals, so every remote shell gets an orderly exit rather than a
+//     dropped TCP connection some host has to time out.
+//  2. The connection pool, which sends each host a clean SSH disconnect and
+//     catches anything a terminal did not own — a file browser, say.
+//  3. Key material, before the database, so a crash while closing the
+//     database still leaves no key in a core dump.
 func (s *Server) closeResources() {
+	if s.terminals != nil {
+		s.terminals.Close()
+	}
+	if s.connections != nil {
+		s.connections.Close()
+	}
+
 	s.cache.Close()
 	s.master.Zero()
 

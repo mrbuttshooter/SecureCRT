@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mrbuttshooter/securecrt/internal/proto/sshx"
+	"github.com/mrbuttshooter/securecrt/internal/remote"
 )
 
 // Errors returned by this package.
@@ -53,9 +54,9 @@ type Terminal struct {
 	Username  string
 	CreatedAt time.Time
 
-	client *sshx.Client
-	shell  *sshx.Session
-	log    *slog.Logger
+	lease *remote.Lease
+	shell *sshx.Session
+	log   *slog.Logger
 
 	mu       sync.Mutex
 	replay   *ringBuffer
@@ -213,10 +214,12 @@ type OpenParams struct {
 	Rows      int
 }
 
-// Open starts a shell on an established SSH connection and registers it.
+// Open starts a shell on a leased SSH connection and registers it.
 //
-// The Manager takes ownership of client: closing the terminal closes it.
-func (m *Manager) Open(client *sshx.Client, p OpenParams) (*Terminal, error) {
+// The Manager takes ownership of the lease: closing the terminal releases it,
+// which closes the connection only if nothing else — a file browser, a second
+// terminal — still holds one.
+func (m *Manager) Open(lease *remote.Lease, p OpenParams) (*Terminal, error) {
 	cols, rows := p.Cols, p.Rows
 	if cols <= 0 {
 		cols = 80
@@ -225,9 +228,13 @@ func (m *Manager) Open(client *sshx.Client, p OpenParams) (*Terminal, error) {
 		rows = 24
 	}
 
+	client := lease.Client()
+
 	shell, err := client.Shell(sshx.PTYConfig{Cols: cols, Rows: rows})
 	if err != nil {
-		_ = client.Close()
+		// The lease goes back rather than the connection being closed: another
+		// holder may be using it perfectly happily.
+		lease.Release()
 		return nil, err
 	}
 
@@ -241,7 +248,7 @@ func (m *Manager) Open(client *sshx.Client, p OpenParams) (*Terminal, error) {
 		Host:      target.Hostname,
 		Port:      target.Port,
 		CreatedAt: time.Now().UTC(),
-		client:    client,
+		lease:     lease,
 		shell:     shell,
 		log:       m.log,
 		replay:    newRingBuffer(ReplayBytes),
@@ -453,7 +460,11 @@ func (t *Terminal) close(cause error) {
 	t.mu.Unlock()
 
 	_ = t.shell.Close()
-	_ = t.client.Close()
+
+	// Release, not close. The SSH connection may still be carrying a file
+	// browser or another terminal on the same host, and ending a shell must
+	// not take those with it.
+	t.lease.Release()
 }
 
 // Get returns a terminal, checking ownership.

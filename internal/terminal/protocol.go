@@ -24,6 +24,8 @@ package terminal
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/mrbuttshooter/securecrt/internal/remote"
 )
 
 // ControlType identifies a JSON control message.
@@ -68,12 +70,16 @@ const (
 )
 
 // Status values for ControlStatus.
+//
+// Defined by the connection layer, because the interesting ones happen while
+// a connection is being established and that path is shared with the file
+// browser. Re-exported here so the wire protocol is readable in one place.
 const (
-	StatusDialling       = "dialling"
-	StatusVerifyingHost  = "verifying_host"
-	StatusAuthenticating = "authenticating"
-	StatusConnected      = "connected"
-	StatusReattached     = "reattached"
+	StatusDialling       = remote.StatusDialling
+	StatusVerifyingHost  = remote.StatusVerifyingHost
+	StatusAuthenticating = remote.StatusAuthenticating
+	StatusConnected      = remote.StatusConnected
+	StatusReattached     = remote.StatusReattached
 )
 
 // Control is a JSON control message.
@@ -108,56 +114,21 @@ type Control struct {
 	ExitStatus *int `json:"exit_status,omitempty"`
 }
 
-// HostKeyInfo describes a host key for the approval dialog.
-type HostKeyInfo struct {
-	Hostname    string `json:"hostname"`
-	Port        int    `json:"port"`
-	KeyType     string `json:"key_type"`
-	Fingerprint string `json:"fingerprint"`
-
-	// PreviousFingerprint is set when the key has changed, so the interface
-	// can show both rather than merely asserting a difference.
-	PreviousFingerprint string `json:"previous_fingerprint,omitempty"`
-
-	// PreviouslySeen is when the recorded key was first trusted. A key
-	// trusted years ago changing today reads very differently from one
-	// trusted this morning.
-	PreviouslySeen string `json:"previously_seen,omitempty"`
-
-	// OrgWide reports that the recorded key was published by an
-	// administrator, which means the user cannot override it.
-	OrgWide bool `json:"org_wide,omitempty"`
-}
-
 // Error codes carried by ControlError.
+//
+// The connection failures are the shared ones — a host key that changed is
+// the same event whether a shell or a file listing was wanted — so they are
+// defined once and re-exported. ErrCodeNotFound additionally covers a
+// terminal ID the server no longer knows.
 const (
-	// ErrCodeHostKeyChanged means the host presented a different key. The
-	// most serious error this protocol reports.
-	ErrCodeHostKeyChanged = "host_key_changed"
-
-	// ErrCodeHostKeyRejected means the user declined an unknown key.
-	ErrCodeHostKeyRejected = "host_key_rejected"
-
-	// ErrCodeAuthFailed means the host refused the credential.
-	ErrCodeAuthFailed = "auth_failed"
-
-	// ErrCodeUnreachable means the host could not be contacted.
-	ErrCodeUnreachable = "unreachable"
-
-	// ErrCodeVaultLocked means the vault must be unlocked to read the
-	// credential.
-	ErrCodeVaultLocked = "vault_locked"
-
-	// ErrCodeNoCredential means the saved connection names no usable
-	// credential.
-	// #nosec G101 -- an error code sent to the browser, not a credential.
-	ErrCodeNoCredential = "no_credential"
-
-	// ErrCodeNotFound means the saved connection or terminal is unknown.
-	ErrCodeNotFound = "not_found"
-
-	// ErrCodeInternal is anything else.
-	ErrCodeInternal = "internal_error"
+	ErrCodeHostKeyChanged  = remote.CodeHostKeyChanged
+	ErrCodeHostKeyRejected = remote.CodeHostKeyRejected
+	ErrCodeAuthFailed      = remote.CodeAuthFailed
+	ErrCodeUnreachable     = remote.CodeUnreachable
+	ErrCodeVaultLocked     = remote.CodeVaultLocked
+	ErrCodeNoCredential    = remote.CodeNoCredential
+	ErrCodeNotFound        = remote.CodeNotFound
+	ErrCodeInternal        = remote.CodeInternal
 )
 
 // Encode renders a control message.

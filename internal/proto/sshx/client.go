@@ -327,6 +327,18 @@ func (c *Client) keepAlive(every time.Duration) {
 // Target reports where this client is connected.
 func (c *Client) Target() Target { return c.target }
 
+// Conn exposes the underlying SSH connection.
+//
+// Subsystems this package does not itself implement — SFTP above all — need
+// it to open their own channels. Keeping the dependency this way round means
+// sshx stays about the transport and host key verification, and does not grow
+// an import of every protocol layered on top of it.
+//
+// The connection is shared: SSH multiplexes channels, so a file transfer and
+// a shell coexist on one TCP connection, one authentication, and one vty line
+// on equipment that counts them.
+func (c *Client) Conn() *ssh.Client { return c.conn }
+
 // Close ends the connection.
 func (c *Client) Close() error {
 	if !c.stopped {
