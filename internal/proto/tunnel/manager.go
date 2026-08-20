@@ -269,11 +269,34 @@ func (m *Manager) listen(ctx context.Context, t *Tunnel) error {
 		return err
 	}
 
-	addr := net.JoinHostPort(m.cfg.Bind, strconv.Itoa(port))
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
+	// Retried, because a free number is not the same as a free port.
+	//
+	// allocatePort only knows which ports *this* process has handed out. The
+	// kernel is also handing out source ports for outbound connections, and
+	// on Linux the ephemeral range is 32768-60999 by default — so a tunnel
+	// range inside it will intermittently pick a number some other socket is
+	// already using, and the bind fails. Retrying makes that a slower open
+	// rather than a failed one, whatever range an operator configures.
+	var (
+		listener net.Listener
+		addr     string
+	)
+	for attempt := 0; ; attempt++ {
+		addr = net.JoinHostPort(m.cfg.Bind, strconv.Itoa(port))
+		listener, err = net.Listen("tcp", addr)
+		if err == nil {
+			break
+		}
+
 		m.releasePort(port)
-		return fmt.Errorf("tunnel: listening on %s: %w", addr, err)
+		if attempt >= listenAttempts-1 {
+			return fmt.Errorf("tunnel: listening on %s: %w", addr, err)
+		}
+
+		port, err = m.allocatePort()
+		if err != nil {
+			return err
+		}
 	}
 
 	t.listener = listener
@@ -321,6 +344,13 @@ func (m *Manager) listenRemote(ctx context.Context, t *Tunnel) error {
 	go m.accept(ctx, t)
 	return nil
 }
+
+// listenAttempts is how many ports to try before giving up.
+//
+// Small: a handful of collisions means the range is genuinely busy or badly
+// chosen, and grinding through a thousand of them would turn a
+// misconfiguration into a slow request rather than an error somebody fixes.
+const listenAttempts = 8
 
 // allocatePort picks a free port from the configured range.
 //

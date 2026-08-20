@@ -647,10 +647,22 @@ func TestTheInheritedPortMigrationCarriesExistingRows(t *testing.T) {
 			}
 		}
 
-		// Down: zero has nowhere to go in the old schema, so it becomes the
-		// protocol's default. Everything else must be untouched.
-		if err := Rollback(ctx, db, quietLogger()); err != nil {
-			t.Fatalf("rollback: %v", err)
+		// Down to before 0003. Rollback reverts one migration at a time and
+		// this test is about a specific one, so it steps back until that one
+		// has gone — otherwise adding a later migration silently turns this
+		// into a test of something else, which is exactly what happened when
+		// 0004 arrived.
+		for {
+			current, err := CurrentVersion(ctx, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current < 3 {
+				break
+			}
+			if err := Rollback(ctx, db, quietLogger()); err != nil {
+				t.Fatalf("rollback from %d: %v", current, err)
+			}
 		}
 
 		afterDown := map[string]int{"explicit": 2222, "inherited": 22, "telnet-inherited": 23}

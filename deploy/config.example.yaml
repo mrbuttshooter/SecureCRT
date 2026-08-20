@@ -226,7 +226,14 @@ tunnels:
 
   # The ports tunnels are allocated from, so one firewall rule can cover them
   # and stay true. Privileged ports are refused: bkd runs unprivileged.
-  port_range: "34000-34999"
+  # Below the kernel's ephemeral range, which on Linux is 32768-60999 unless
+  # somebody changed it — check with:
+  #     cat /proc/sys/net/ipv4/ip_local_port_range
+  # A range inside that overlaps the ports the kernel hands out as outbound
+  # source ports, so a listener will occasionally fail to bind against a
+  # socket it cannot see. bkd retries, and warns at startup if the ranges
+  # overlap, but the fix is to pick a range that does not.
+  port_range: "30000-30999"
 
   # The wildcard base for reaching a device's own web interface — a switch or
   # router GUI — through a bastion, with no open port and nothing to configure

@@ -354,3 +354,43 @@ func TestGenerateMasterKeyRefusesOverwrite(t *testing.T) {
 		t.Fatal("regenerating a master key would orphan every team credential; it must be refused")
 	}
 }
+
+// TestAnOverlappingTunnelRangeIsReported.
+//
+// The shipped default was 34000-34999, which sits inside Linux's ephemeral
+// range of 32768-60999 — so the kernel hands those ports out as outbound
+// source ports and a tunnel listener intermittently fails to bind against a
+// socket bkd cannot see. The symptom is a feature that works nineteen times
+// out of twenty, which reads as flakiness rather than as the configuration
+// mistake it is.
+//
+// Found by a test flake in Phase 7, three phases after it shipped.
+func TestAnOverlappingTunnelRangeIsReported(t *testing.T) {
+	low, high, ok := ephemeralRange()
+	if !ok {
+		t.Skip("this kernel does not report an ephemeral port range")
+	}
+
+	// A range squarely inside it must be reported.
+	if warning := describeEphemeralOverlap(low+100, low+200); warning == "" {
+		t.Errorf("a range inside %d-%d drew no warning", low, high)
+	}
+
+	// One below it must not.
+	if low > 2000 {
+		if warning := describeEphemeralOverlap(low-1000, low-1); warning != "" {
+			t.Errorf("a range below the ephemeral one was reported: %s", warning)
+		}
+	}
+
+	// And the shipped default must be one of the quiet ones, which is the
+	// whole point of having changed it.
+	shipped := config.Default()
+	shippedLow, shippedHigh, err := config.ParsePortRange(shipped.Tunnels.PortRange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warning := describeEphemeralOverlap(shippedLow, shippedHigh); warning != "" {
+		t.Errorf("the shipped default overlaps the ephemeral range: %s", warning)
+	}
+}

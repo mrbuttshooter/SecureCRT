@@ -289,6 +289,15 @@ type TunnelsConfig struct {
 
 	// PortRange bounds the ports allocated to tunnels, as "low-high", so a
 	// firewall rule can be written once and stay true.
+	//
+	// The default sits below Linux's ephemeral range, which is 32768-60999
+	// unless somebody changed it. A range inside that overlaps the ports the
+	// kernel hands out as outbound source ports, so a listener will
+	// intermittently fail to bind against a socket it cannot see — which
+	// looks like a flaky feature rather than a configuration mistake. The
+	// server checks and warns at startup; `cat
+	// /proc/sys/net/ipv4/ip_local_port_range` is the number to compare
+	// against.
 	PortRange string `yaml:"port_range"`
 
 	// Domain is the wildcard base under which a device's web interface is
@@ -378,7 +387,7 @@ func Default() Config {
 		Serial: SerialConfig{AllowedDevices: nil},
 		Tunnels: TunnelsConfig{
 			Bind:        "127.0.0.1",
-			PortRange:   "34000-34999",
+			PortRange:   "30000-30999",
 			Domain:      "",
 			MaxPerUser:  8,
 			IdleTimeout: time.Hour,
@@ -659,7 +668,7 @@ func (t TunnelsConfig) validate(listenersAllowed bool) []error {
 func ParsePortRange(spec string) (low, high int, err error) {
 	before, after, ok := strings.Cut(spec, "-")
 	if !ok {
-		return 0, 0, fmt.Errorf("%q must be written low-high, such as 34000-34999", spec)
+		return 0, 0, fmt.Errorf("%q must be written low-high, such as 30000-30999", spec)
 	}
 
 	low, err = strconv.Atoi(strings.TrimSpace(before))

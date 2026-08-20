@@ -25,6 +25,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/proto/tunnel"
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
+	"github.com/mrbuttshooter/securecrt/internal/snippets"
 	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
 	"github.com/mrbuttshooter/securecrt/internal/users"
@@ -216,6 +217,7 @@ func (s *Server) buildAPI(ctx context.Context) error {
 		FileSessions: s.fileSessions,
 		Transfers:    s.transfers,
 		Tunnels:      s.tunnels,
+		Snippets:     snippets.NewStore(s.db),
 		Portability:  portability.NewService(sessionTree, credentialStore, hostKeyStore, s.log),
 		Connector:    connector,
 		HostKeys:     hostKeyStore,
@@ -348,6 +350,14 @@ func (s *Server) warnOnRiskyPolicy() {
 			"whoever can reach the bind address reaches whatever is behind them, "+
 			"with no account here",
 			"bind", s.cfg.Tunnels.Bind, "ports", s.cfg.Tunnels.PortRange)
+	}
+	if s.cfg.Policy.AllowTCPTunnels {
+		low, high, err := config.ParsePortRange(s.cfg.Tunnels.PortRange)
+		if err == nil {
+			if warning := describeEphemeralOverlap(low, high); warning != "" {
+				s.log.Warn(warning)
+			}
+		}
 	}
 	if s.cfg.Policy.AllowRemoteForwards {
 		s.log.Warn("policy allows remote forwarding; a user can ask a device to " +
