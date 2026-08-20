@@ -1,6 +1,7 @@
 package api
 
 import (
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -268,4 +269,138 @@ func waitUntil(t *testing.T, cond func() bool, what string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for: %s", what)
+}
+
+// TestTheStoredPasswordIsTypedAtTheDevicesPrompt is what makes an imported
+// telnet tree usable rather than merely present.
+//
+// Telnet has no authentication, so a stored credential is worth nothing until
+// something types it. SecureCRT calls this Logon Actions; here it is a
+// sequence of expect/send steps with the password substituted from the vault
+// at connect time.
+func TestTheStoredPasswordIsTypedAtTheDevicesPrompt(t *testing.T) {
+	h := signedInWithVault(t)
+	device := startLoginDevice(t)
+
+	_, cred := h.post("/api/credentials", map[string]string{
+		"name": "switch login", "kind": "password", "secret": "hunter2",
+	})
+	credID, _ := cred["id"].(string)
+	if credID == "" {
+		t.Fatalf("no credential: %v", cred)
+	}
+
+	resp, sess := h.post("/api/tree/sessions", map[string]any{
+		"name": "old-switch", "protocol": "telnet",
+		"hostname": device.Host, "port": device.Port,
+		"username": "netops", "credential_id": credID,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("creating the connection = %d: %v", resp.StatusCode, sess)
+	}
+	sessionID, _ := sess["id"].(string)
+
+	conn := h.dialTerminal(t, "session="+sessionID)
+	view := newSocketView(conn)
+
+	// The device asks, the sequence answers, and the device lets it in.
+	view.waitFor(t, "switch#", "", 20*time.Second)
+
+	// The whole exchange is in the user's own scrollback, which is the reason
+	// this wraps the shell rather than running before one exists: an
+	// automated login that nobody can see is an automated login nobody can
+	// check.
+	screen := view.screen.String()
+	if !strings.Contains(screen, "Username:") || !strings.Contains(screen, "Password:") {
+		t.Errorf("the login exchange is not visible to the user:\n%s", screen)
+	}
+	if strings.Contains(screen, "hunter2") {
+		t.Error("the password was echoed to the screen")
+	}
+}
+
+// loginDevice is a telnet device that demands a username and password.
+type loginDevice struct {
+	Host string
+	Port int
+}
+
+func startLoginDevice(t *testing.T) *loginDevice {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go serveLogin(conn)
+		}
+	}()
+
+	host, portStr, _ := net.SplitHostPort(listener.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	return &loginDevice{Host: host, Port: port}
+}
+
+// serveLogin plays a switch: banner, username, password, prompt.
+func serveLogin(conn net.Conn) {
+	defer func() { _ = conn.Close() }()
+
+	// Takes echo, like a switch, so nothing this end sends is echoed back and
+	// the password never reaches the screen.
+	_, _ = conn.Write([]byte{
+		telnetx.IAC, telnetx.WILL, telnetx.OptEcho,
+		telnetx.IAC, telnetx.WILL, telnetx.OptSuppressGA,
+	})
+	_, _ = conn.Write([]byte("\r\nUser Access Verification\r\n\r\nUsername: "))
+
+	line := func() string {
+		var out []byte
+		buf := make([]byte, 1)
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				return string(out)
+			}
+			if n == 0 {
+				continue
+			}
+			// Skip negotiation rather than parsing it; this device only has
+			// to be convincing.
+			if buf[0] == telnetx.IAC {
+				skip := make([]byte, 2)
+				_, _ = io.ReadFull(conn, skip)
+				continue
+			}
+			if buf[0] == '\r' || buf[0] == '\n' {
+				return string(out)
+			}
+			out = append(out, buf[0])
+		}
+	}
+
+	user := line()
+	_, _ = conn.Write([]byte("\r\nPassword: "))
+	password := line()
+
+	if user == "netops" && password == "hunter2" {
+		_, _ = conn.Write([]byte("\r\nswitch#"))
+	} else {
+		_, _ = conn.Write([]byte("\r\n% Access denied\r\n\r\nUsername: "))
+	}
+
+	// Held open so the test can read the prompt.
+	buf := make([]byte, 256)
+	for {
+		if _, err := conn.Read(buf); err != nil {
+			return
+		}
+	}
 }

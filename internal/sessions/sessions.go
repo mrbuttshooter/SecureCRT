@@ -112,6 +112,37 @@ type Settings struct {
 	// every host inside that folder, and the person who set the default would
 	// be the last to know.
 	AgentForwardCredentials *[]string `json:"agent_forward_credentials,omitempty"`
+
+	// LogonSteps is what to type at a device's own login prompt, for the
+	// protocols that have no authentication of their own.
+	//
+	// Inherited from a folder, unlike the field above, and the difference is
+	// the point: a folder of three hundred switches with one login sequence
+	// is exactly the case this exists for, and the sequence grants no
+	// authority by itself — it names a credential the connection already had.
+	// Agent forwarding hands a key to a host; this types a password the
+	// connection was already going to use.
+	//
+	// Nil means "not set here". An explicitly empty list means "send nothing",
+	// which is how somebody turns off the default sequence on one connection
+	// inside a folder that has one.
+	LogonSteps *[]LogonStep `json:"logon_steps,omitempty"`
+}
+
+// EffectiveLogonSteps is the sequence to run, or the default.
+//
+// A connection that names a password and says nothing about how to use it
+// gets DefaultLogonSteps, because the alternative is a stored credential that
+// does nothing and a user wondering why. A connection with an explicitly
+// empty list gets silence, which is how the default is refused.
+func (s Settings) EffectiveLogonSteps(hasPassword bool) []LogonStep {
+	if s.LogonSteps != nil {
+		return append([]LogonStep(nil), (*s.LogonSteps)...)
+	}
+	if !hasPassword {
+		return nil
+	}
+	return DefaultLogonSteps()
 }
 
 // ForwardsAgent reports whether this connection offers an agent.
@@ -156,6 +187,9 @@ func (s Settings) merge(parent Settings) Settings {
 	}
 	if out.LogSession == nil {
 		out.LogSession = parent.LogSession
+	}
+	if out.LogonSteps == nil {
+		out.LogonSteps = parent.LogonSteps
 	}
 
 	// AgentForwardCredentials is absent from this list deliberately, and the

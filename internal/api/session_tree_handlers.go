@@ -118,6 +118,11 @@ func (a *API) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := checkLogonSteps(req.Defaults); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
+
 	var defaults sessions.Settings
 	if req.Defaults != nil {
 		defaults = *req.Defaults
@@ -157,6 +162,11 @@ func (a *API) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.checkAgentKeys(r.Context(), u.ID, req.Defaults, true); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
+
+	if err := checkLogonSteps(req.Defaults); err != nil {
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
 		return
 	}
@@ -251,6 +261,11 @@ func (a *API) handleCreateSavedSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := checkLogonSteps(req.Settings); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
+
 	var settings sessions.Settings
 	if req.Settings != nil {
 		settings = *req.Settings
@@ -310,6 +325,11 @@ func (a *API) handleUpdateSavedSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.checkAgentKeys(r.Context(), u.ID, req.Settings, false); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
+
+	if err := checkLogonSteps(req.Settings); err != nil {
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
 		return
 	}
@@ -510,6 +530,19 @@ func (a *API) effectivePort(r *http.Request, userID string, s sessions.Session) 
 		return s.Protocol.DefaultPort()
 	}
 	return resolved.EffectivePort
+}
+
+// checkLogonSteps validates a login sequence at write time.
+//
+// Refused here rather than at connect time, because a sequence that is too
+// long or a field that is absurdly large is a mistake somebody made in a form
+// and should be reported while they are still looking at it — not three days
+// later when a switch does not answer.
+func checkLogonSteps(settings *sessions.Settings) error {
+	if settings == nil || settings.LogonSteps == nil {
+		return nil
+	}
+	return sessions.ValidateLogonSteps(*settings.LogonSteps)
 }
 
 // checkAgentKeys validates the agent-forwarding setting at write time.

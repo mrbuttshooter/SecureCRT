@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -859,5 +860,118 @@ func TestAConnectionsOwnAgentSettingSurvivesInheritance(t *testing.T) {
 	got := merged.AgentCredentials()
 	if len(got) != 1 || got[0] != "my-key" {
 		t.Fatalf("the connection's own keys = %v, want [my-key]", got)
+	}
+}
+
+// TestLogonStepsAreInheritedFromAFolder.
+//
+// Deliberately unlike agent forwarding, which is excluded from inheritance a
+// few lines above this in merge. The difference is what each one grants: a
+// folder default that forwards keys hands a machine the ability to
+// authenticate elsewhere, while a folder default that says "wait for a
+// password prompt, then send the password" grants nothing on its own — it
+// names a credential the connection already had. A folder of three hundred
+// switches with one login sequence is the case this exists for.
+func TestLogonStepsAreInheritedFromAFolder(t *testing.T) {
+	steps := []LogonStep{{Expect: "ogin:", Send: PlaceholderUsername + "\\r"}}
+	merged := Settings{}.merge(Settings{LogonSteps: &steps})
+
+	if merged.LogonSteps == nil {
+		t.Fatal("a folder's logon sequence must reach the connections inside it")
+	}
+	if len(*merged.LogonSteps) != 1 {
+		t.Errorf("got %d steps", len(*merged.LogonSteps))
+	}
+}
+
+// TestAnEmptyLogonSequenceRefusesTheDefault.
+//
+// Nil and empty mean different things here, and both are needed: nil is "say
+// nothing about this", which for a connection with a password falls back to
+// the default sequence, and empty is "send nothing", which is how one
+// connection inside a folder opts out.
+func TestAnEmptyLogonSequenceRefusesTheDefault(t *testing.T) {
+	if got := (Settings{}).EffectiveLogonSteps(true); len(got) == 0 {
+		t.Error("a connection with a password and no opinion should get the default")
+	}
+	if got := (Settings{}).EffectiveLogonSteps(false); len(got) != 0 {
+		t.Error("a connection with no password has nothing to type")
+	}
+
+	none := []LogonStep{}
+	if got := (Settings{LogonSteps: &none}).EffectiveLogonSteps(true); len(got) != 0 {
+		t.Errorf("an explicitly empty sequence must send nothing, got %d steps", len(got))
+	}
+}
+
+// TestTheDefaultSequenceMatchesBothVendorsPrompts.
+//
+// Steps run in order, so a sequence waiting for "ogin:" is stuck forever in
+// front of a Cisco device that says "Username:": the step never matches, and
+// every step behind it waits on one that never fires. The first version of
+// the default did exactly that.
+func TestTheDefaultSequenceMatchesBothVendorsPrompts(t *testing.T) {
+	steps := DefaultLogonSteps()
+	if len(steps) == 0 {
+		t.Fatal("there is no default sequence")
+	}
+
+	for _, prompt := range []string{
+		"login: ",        // Unix
+		"Username: ",     // Cisco
+		"\r\nUsername: ", // with the carriage return before it
+		"switch login: ", // a hostname in front
+	} {
+		if !steps[0].Matches(prompt) {
+			t.Errorf("the first step does not match %q, so the sequence stalls there", prompt)
+		}
+	}
+
+	if !steps[len(steps)-1].Matches("Password: ") {
+		t.Error("the last step does not match a password prompt")
+	}
+}
+
+// TestExpandSendResolvesEscapesBeforeSubstituting is the ordering that keeps a
+// password from becoming keystrokes.
+//
+// The template is something the user wrote; the password is data, and may have
+// come from a device inventory or somebody's export. Unescaping after
+// substitution would let a password containing the two characters \ and r
+// become a carriage return, and a password chosen to contain one followed by a
+// command would type that command into the device at whatever privilege the
+// login had just granted.
+func TestExpandSendResolvesEscapesBeforeSubstituting(t *testing.T) {
+	got := ExpandSend(PlaceholderPassword+"\\r", "netops", `p\rwrite erase`)
+
+	want := `p\rwrite erase` + "\r"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if strings.Count(got, "\r") != 1 {
+		t.Errorf("the password's backslashes became carriage returns: %q", got)
+	}
+}
+
+// TestLogonStepsAreBounded. Eight is more than any real login needs, and small
+// enough that a pasted loop cannot turn a connection into a keystroke
+// generator.
+func TestLogonStepsAreBounded(t *testing.T) {
+	tooMany := make([]LogonStep, MaxLogonSteps+1)
+	for i := range tooMany {
+		tooMany[i] = LogonStep{Expect: "x", Send: "y"}
+	}
+	if err := ValidateLogonSteps(tooMany); err == nil {
+		t.Error("a sequence longer than the limit must be refused")
+	}
+
+	if err := ValidateLogonSteps([]LogonStep{{Expect: strings.Repeat("x", 200)}}); err == nil {
+		t.Error("an absurd expect must be refused")
+	}
+	if err := ValidateLogonSteps([]LogonStep{{}}); err == nil {
+		t.Error("a step that neither waits nor sends must be refused")
+	}
+	if err := ValidateLogonSteps(DefaultLogonSteps()); err != nil {
+		t.Errorf("the default sequence must be valid: %v", err)
 	}
 }

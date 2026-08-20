@@ -202,6 +202,10 @@ func (a *API) openTerminal(
 			// a definite answer at this moment and a guess afterwards.
 			"encrypted": term.Transport.Encrypted(),
 			"username":  term.Username, "terminal_id": term.ID,
+			// The number of login steps queued, never their content: one of
+			// them carries the password, and an audit log forwarded to a SIEM
+			// is the worst possible place for it to land.
+			"logon_steps": term.LogonSteps,
 		},
 	})
 

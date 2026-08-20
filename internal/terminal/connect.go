@@ -225,13 +225,28 @@ func (c *Connector) connectTelnet(
 
 	progress(remote.StatusConnected)
 
-	term, err := c.manager.Open(conn, nil, OpenParams{
-		UserID:    p.UserID,
-		SessionID: resolved.ID,
-		Label:     resolved.Name,
-		Username:  resolved.EffectiveUsername,
-		Cols:      cols,
-		Rows:      rows,
+	// The credential is fetched after the connection is open rather than
+	// before, so a device that is simply unreachable does not cost a vault
+	// decryption — and so the secret's lifetime is as short as it can be.
+	logon, err := c.dialer.LogonFor(ctx, remote.Params{
+		UserID: p.UserID, SessionID: resolved.ID, VaultKey: p.VaultKey,
+	}, resolved)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+
+	steps := resolved.Settings.EffectiveLogonSteps(logon.Password != "")
+	shell := WithLogon(conn, steps, logon.Username, logon.Password)
+
+	term, err := c.manager.Open(shell, nil, OpenParams{
+		UserID:     p.UserID,
+		SessionID:  resolved.ID,
+		Label:      resolved.Name,
+		Username:   resolved.EffectiveUsername,
+		Cols:       cols,
+		Rows:       rows,
+		LogonSteps: len(steps),
 		Transport: Transport{
 			Protocol: sessions.ProtocolTelnet,
 			Host:     resolved.Hostname,

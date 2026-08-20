@@ -65,6 +65,10 @@ type Terminal struct {
 	// fails somewhere else.
 	AgentRefused bool
 
+	// LogonSteps is how many login steps were queued for this session, for
+	// the audit record. The count only — one of them holds a password.
+	LogonSteps int
+
 	shell Shell
 	log   *slog.Logger
 
@@ -236,6 +240,12 @@ type OpenParams struct {
 
 	// Transport says what this session runs over and how it was reached.
 	Transport Transport
+
+	// LogonSteps is how many login steps were queued for this session.
+	//
+	// The count and never the content: one of those steps carries a
+	// password, and an audit log is exactly the wrong place for it to end up.
+	LogonSteps int
 }
 
 // Open registers a shell somebody else opened and starts pumping it.
@@ -274,6 +284,7 @@ func (m *Manager) Open(shell Shell, release func(), p OpenParams) (*Terminal, er
 
 		AgentKeys:    p.AgentKeys,
 		AgentRefused: p.AgentRefused,
+		LogonSteps:   p.LogonSteps,
 
 		shell:   shell,
 		release: release,
