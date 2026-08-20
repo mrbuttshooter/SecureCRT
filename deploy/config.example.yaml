@@ -137,10 +137,13 @@ log:
 
 policy:
   # Off by default. When enabled, a user can export credentials as plaintext
-  # after re-entering their vault passphrase and confirming; every such export
-  # is recorded as a critical audit event. In a shared deployment this is the
-  # most direct exfiltration path there is — leave it off unless you have a
-  # specific reason. Encrypted bundle export stays available either way.
+  # after confirming; every such export is recorded as a critical audit event.
+  # In a shared deployment this is the most direct exfiltration path there is —
+  # leave it off unless you have a specific reason.
+  #
+  # This gates secrets, not formats. Exporting an ssh_config or a CSV of
+  # hostnames without keys or passwords is unaffected, and the encrypted
+  # bundle export stays available either way.
   allow_plaintext_export: false
 
   allow_password_auth: true

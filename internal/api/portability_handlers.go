@@ -1,12 +1,10 @@
 package api
 
 import (
-	"archive/zip"
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"strings"
 	"sync"
@@ -45,17 +43,6 @@ const defaultMaxImportBytes int64 = 64 << 20 // 64 MiB
 // field — so a file at exactly the documented limit still gets the message
 // about the file rather than one about the request.
 const previewBodyHeadroom int64 = 1 << 20
-
-// maxArchiveEntries and maxArchiveEntryBytes bound what a zip may expand to.
-//
-// A zip that decompresses to something enormous is the obvious way to attack
-// a program that accepts archives, and the compressed size says nothing about
-// the uncompressed one.
-const (
-	maxArchiveEntries    = 200000
-	maxArchiveEntryBytes = 16 << 20
-	maxArchiveTotalBytes = 512 << 20
-)
 
 // stagingTTL is how long a previewed import waits to be committed.
 //
@@ -246,146 +233,24 @@ func (a *API) handlePreviewImport(w http.ResponseWriter, r *http.Request) {
 }
 
 // readUpload turns an uploaded file into a payload.
+//
+// The conversion itself lives in the portability package, because the command
+// line drives the same one. This is only the translation from form fields.
 func (a *API) readUpload(
 	source portability.Source,
 	filename string,
 	data []byte,
 	r *http.Request,
 ) (portability.Import, error) {
-	switch source {
-	case portability.SourceBundle:
-		bundle, err := portability.Read(bytes.NewReader(data))
-		if err != nil {
-			return portability.Import{}, err
-		}
-		payload, err := bundle.Open([]byte(r.FormValue("passphrase")))
-		if err != nil {
-			return portability.Import{}, err
-		}
-		return portability.Import{
-			Source: portability.SourceBundle, Payload: payload,
-			Warnings: []string{}, Notes: []string{},
-		}, nil
-
-	case portability.SourceSecureCRT:
-		fsys, err := archiveFS(data, filename)
-		if err != nil {
-			return portability.Import{}, err
-		}
-		return portability.FromSecureCRT(fsys, portability.SecureCRTOptions{
-			ConfigPassphrase: r.FormValue("config_passphrase"),
-			SkipPasswords:    r.FormValue("skip_passwords") == "true",
-		})
-
-	case portability.SourceOpenSSH:
-		fsys, err := archiveFS(data, filename)
-		if err != nil {
-			return portability.Import{}, err
-		}
-		return portability.FromSSHDirectory(fsys, portability.SSHConfigOptions{
-			ImportKeys:       r.FormValue("import_keys") == "true",
-			ImportKnownHosts: r.FormValue("import_known_hosts") == "true",
-		})
-
-	case portability.SourcePuTTY:
-		// A .reg is one file; a .putty directory arrives as an archive.
-		if strings.HasSuffix(strings.ToLower(filename), ".reg") {
-			return portability.FromPuTTYRegistry(bytes.NewReader(data), portability.PuTTYOptions{})
-		}
-		fsys, err := archiveFS(data, filename)
-		if err != nil {
-			return portability.Import{}, err
-		}
-		return portability.FromPuTTYDirectory(fsys, portability.PuTTYOptions{})
-
-	case portability.SourceCSV:
-		return portability.FromCSV(bytes.NewReader(data), portability.CSVOptions{
-			FolderName: r.FormValue("folder"),
-		})
-
-	default:
-		return portability.Import{}, fmt.Errorf("%w: %q", errUnknownSource, source)
-	}
-}
-
-var errUnknownSource = errors.New("api: unknown import source")
-
-var errNotAnArchive = errors.New("api: this is not a zip archive")
-
-// archiveFS opens an uploaded zip as a filesystem.
-//
-// Configurations are directories, and a browser can only upload files, so a
-// zip is what arrives. The bounds below are the whole reason this is not two
-// lines: an archive's compressed size says nothing about what it expands to.
-func archiveFS(data []byte, filename string) (fs.FS, error) {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", errNotAnArchive, filename)
-	}
-
-	if len(reader.File) > maxArchiveEntries {
-		return nil, fmt.Errorf("api: the archive holds more than %d files", maxArchiveEntries)
-	}
-
-	var total uint64
-	for _, entry := range reader.File {
-		if entry.UncompressedSize64 > maxArchiveEntryBytes {
-			return nil, fmt.Errorf("api: %s expands to more than %d MiB",
-				entry.Name, maxArchiveEntryBytes>>20)
-		}
-		total += entry.UncompressedSize64
-		if total > maxArchiveTotalBytes {
-			return nil, fmt.Errorf("api: the archive expands to more than %d MiB",
-				maxArchiveTotalBytes>>20)
-		}
-	}
-
-	// A zip made by zipping a folder has everything under one directory,
-	// which would put "Sessions" one level below where the readers look.
-	return stripSingleRoot(reader), nil
-}
-
-// stripSingleRoot descends past a lone top-level directory.
-//
-// Zipping a folder on any desktop produces exactly that shape, so without
-// this every upload would need the user to have zipped the folder's contents
-// rather than the folder — a distinction nobody should have to know about.
-func stripSingleRoot(reader *zip.Reader) fs.FS {
-	root := ""
-	for _, entry := range reader.File {
-		name := strings.TrimPrefix(entry.Name, "./")
-		if name == "" {
-			continue
-		}
-		// Archives from macOS carry a metadata directory that is not part of
-		// what the user zipped.
-		if strings.HasPrefix(name, "__MACOSX/") {
-			continue
-		}
-
-		slash := strings.Index(name, "/")
-		if slash < 0 {
-			return reader // a file at the top level: nothing to strip
-		}
-
-		first := name[:slash]
-		if root == "" {
-			root = first
-			continue
-		}
-		if root != first {
-			return reader
-		}
-	}
-
-	if root == "" {
-		return reader
-	}
-	nested, err := fs.Sub(reader, root)
-	if err != nil {
-		return reader
-	}
-	return nested
+	return portability.ReadUpload(source, filename, data, portability.UploadOptions{
+		BundlePassphrase: r.FormValue("passphrase"),
+		ConfigPassphrase: r.FormValue("config_passphrase"),
+		SkipPasswords:    r.FormValue("skip_passwords") == "true",
+		KeyPassphrase:    r.FormValue("key_passphrase"),
+		ImportKeys:       r.FormValue("import_keys") == "true",
+		ImportKnownHosts: r.FormValue("import_known_hosts") == "true",
+		FolderName:       r.FormValue("folder"),
+	})
 }
 
 type commitImportRequest struct {
@@ -505,17 +370,23 @@ func (a *API) handleExport(w http.ResponseWriter, r *http.Request) {
 	// The gate. A plaintext export is the most security-relevant thing this
 	// system does: it takes everything out of the vault and writes it
 	// somewhere nothing is protecting.
-	if format.Plaintext() {
+	// The gate is about credentials leaving the vault in the clear, so it is
+	// the combination that trips it. A device list with no secrets in it is
+	// how somebody goes back to plain OpenSSH, and refusing that would be
+	// refusing the exit this system promises to leave open. It is also what
+	// the audit recorder already assumes: only this combination is critical.
+	if format.Plaintext() && req.IncludeSecrets {
 		if !a.cfg.AllowPlaintextExport {
 			writeError(w, a.log, http.StatusForbidden, CodeForbidden,
-				"Plaintext export is disabled on this server. Export an encrypted "+
-					"bundle instead, or ask an administrator.")
+				"Exporting keys and passwords in the clear is disabled on this "+
+					"server. Export an encrypted bundle instead, or export this "+
+					"format without secrets.")
 			return
 		}
 		if !req.Confirm {
 			writeError(w, a.log, http.StatusBadRequest, CodeBadRequest,
-				"This format is not encrypted. Confirm that you understand what "+
-					"the file will contain.")
+				"This format is not encrypted, and you asked for the keys and "+
+					"passwords. Confirm that you understand what the file will contain.")
 			return
 		}
 	}
@@ -672,11 +543,11 @@ func (a *API) writeImportError(w http.ResponseWriter, err error) {
 		writeError(w, a.log, http.StatusRequestEntityTooLarge, CodeBadRequest,
 			"That file is too large to read.")
 
-	case errors.Is(err, errNotAnArchive):
+	case errors.Is(err, portability.ErrNotAnArchive):
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest,
 			"That is not a zip archive. Zip your configuration folder and upload that.")
 
-	case errors.Is(err, errUnknownSource):
+	case errors.Is(err, portability.ErrUnknownSource):
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest,
 			"That is not a format this can read.")
 

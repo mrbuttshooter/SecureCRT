@@ -27,6 +27,11 @@ type PuTTYOptions struct {
 	// FolderName is where the imported sessions land. PuTTY has no folders,
 	// so without one they would all arrive at the top level.
 	FolderName string
+
+	// KeyPassphrase is tried against every encrypted .ppk in the upload.
+	// PuTTY allows a different passphrase on each key, so this opens the ones
+	// it fits and the rest are reported by name rather than silently dropped.
+	KeyPassphrase string
 }
 
 // FromPuTTYRegistry reads a .reg export of PuTTY's sessions.
@@ -39,7 +44,9 @@ func FromPuTTYRegistry(r io.Reader, opts PuTTYOptions) (Import, error) {
 	}
 	out.Warnings = append(out.Warnings, warnings...)
 
-	buildPuTTYPayload(&out, sessions, opts)
+	// A .reg export carries session settings only; the key files live
+	// elsewhere on the machine it came from.
+	buildPuTTYPayload(&out, sessions, opts, nil)
 	return out, nil
 }
 
@@ -91,7 +98,14 @@ func FromPuTTYDirectory(fsys fs.FS, opts PuTTYOptions) (Import, error) {
 		sessions = append(sessions, puttySession{name: name, values: values})
 	}
 
-	buildPuTTYPayload(&out, sessions, opts)
+	// Keys are read before the sessions are built, so a session naming a key
+	// file can be joined to the key itself rather than to a warning about it.
+	keys := readPuTTYKeys(fsys, opts.KeyPassphrase)
+	out.Payload.Credentials = append(out.Payload.Credentials, keys.credentials...)
+	out.Warnings = append(out.Warnings, keys.warnings...)
+	out.Notes = append(out.Notes, keys.notes...)
+
+	buildPuTTYPayload(&out, sessions, opts, keys.byName)
 	return out, nil
 }
 
@@ -243,7 +257,7 @@ func parsePuTTYFile(r io.Reader) (map[string]string, error) {
 }
 
 // buildPuTTYPayload turns parsed sessions into a payload.
-func buildPuTTYPayload(out *Import, sessions []puttySession, opts PuTTYOptions) {
+func buildPuTTYPayload(out *Import, sessions []puttySession, opts PuTTYOptions, keysByName map[string]string) {
 	if len(sessions) == 0 {
 		return
 	}
@@ -293,7 +307,17 @@ func buildPuTTYPayload(out *Import, sessions []puttySession, opts PuTTYOptions) 
 		}
 
 		if key := source.values["PublicKeyFile"]; key != "" {
-			keyFiles[key] = true
+			// PuTTY stores a Windows path. Only the filename can mean anything
+			// inside an upload, which is also how the keys are indexed.
+			name := strings.ToLower(key)
+			if slash := strings.LastIndexAny(name, `/\`); slash >= 0 {
+				name = name[slash+1:]
+			}
+			if id, ok := keysByName[name]; ok {
+				session.CredentialID = id
+			} else {
+				keyFiles[key] = true
+			}
 		}
 
 		if proxy := source.values["ProxyHost"]; proxy != "" {
@@ -313,10 +337,11 @@ func buildPuTTYPayload(out *Import, sessions []puttySession, opts PuTTYOptions) 
 		sort.Strings(names)
 
 		out.Warnings = append(out.Warnings, fmt.Sprintf(
-			"%d sessions use PuTTY key files (%s). PuTTY stores the path rather "+
-				"than the key, and a .ppk is not an OpenSSH key — export each one "+
-				`from PuTTYgen with "Export OpenSSH key" and import it here.`,
-			len(keyFiles), strings.Join(names[:min(3, len(names))], ", ")))
+			"%d session%s name a key file that was not in what you uploaded (%s). "+
+				"PuTTY records the path rather than the key, so add the .ppk files "+
+				"to the archive and import again — they are converted for you.",
+			len(keyFiles), plural(len(keyFiles)),
+			strings.Join(names[:min(3, len(names))], ", ")))
 	}
 
 	out.Notes = append(out.Notes, fmt.Sprintf(

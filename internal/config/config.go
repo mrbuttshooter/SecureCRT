@@ -181,6 +181,11 @@ type LogConfig struct {
 // it disabled, credentials can only leave the system inside a passphrase-
 // encrypted bundle, closing the most obvious exfiltration path in a
 // company-wide deployment.
+//
+// It gates secrets, not formats. An ssh_config or a CSV of hostnames with no
+// keys or passwords in it is unaffected — that is how somebody leaves for
+// plain OpenSSH, and this system does not hold anyone by making the exit
+// difficult.
 type PolicyConfig struct {
 	AllowPlaintextExport bool `yaml:"allow_plaintext_export"`
 	AllowPasswordAuth    bool `yaml:"allow_password_auth"`

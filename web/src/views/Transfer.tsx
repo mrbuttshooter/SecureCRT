@@ -59,7 +59,8 @@ const SOURCES: { value: ImportSource; label: string; hint: string; archive: bool
   {
     value: 'putty', label: 'PuTTY', archive: false,
     hint: 'A .reg export of HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions, ' +
-      'or a zip of your .putty directory. PuTTY stores no passwords.',
+      'or a zip holding your sessions and your .ppk key files. PuTTY stores no ' +
+      'passwords. Any .ppk in the zip is converted to an OpenSSH key for you.',
   },
   {
     value: 'csv', label: 'Spreadsheet (CSV)', archive: false,
@@ -76,6 +77,7 @@ function ImportPanel({ config }: { config: PortabilityConfig }) {
   const [source, setSource] = useState<ImportSource>('securecrt')
   const [passphrase, setPassphrase] = useState('')
   const [configPassphrase, setConfigPassphrase] = useState('')
+  const [keyPassphrase, setKeyPassphrase] = useState('')
   const [importKeys, setImportKeys] = useState(true)
   const [importKnownHosts, setImportKnownHosts] = useState(true)
   const [skipPasswords, setSkipPasswords] = useState(false)
@@ -97,6 +99,7 @@ function ImportPanel({ config }: { config: PortabilityConfig }) {
       setPreview(await previewImport(file, source, {
         passphrase,
         config_passphrase: configPassphrase,
+        key_passphrase: keyPassphrase,
         import_keys: String(importKeys),
         import_known_hosts: String(importKnownHosts),
         skip_passwords: String(skipPasswords),
@@ -186,6 +189,14 @@ function ImportPanel({ config }: { config: PortabilityConfig }) {
               Leave the saved passwords behind
             </label>
           </>
+        )}
+
+        {source === 'putty' && (
+          <label>
+            <span>Key passphrase (only if your .ppk files have one)</span>
+            <input type="password" value={keyPassphrase} autoComplete="off"
+                   onChange={(e) => setKeyPassphrase(e.target.value)} />
+          </label>
         )}
 
         {source === 'ssh_config' && (
@@ -351,6 +362,14 @@ function ExportPanel({ config }: { config: PortabilityConfig }) {
   const carriesSecrets = config.formats_carrying_secret.includes(format)
   const plaintext = !isBundle
 
+  // The policy switch is about credentials leaving the vault in the clear, so
+  // it is the combination that is gated. A device list with no secrets in it
+  // stays available whatever the switch says — that is how somebody goes back
+  // to plain OpenSSH.
+  const wouldCarrySecrets = carriesSecrets && includeSecrets
+  const blockedByPolicy = plaintext && wouldCarrySecrets && !config.allow_plaintext_export
+  const needsConfirmation = plaintext && wouldCarrySecrets
+
   const run = async () => {
     setError(null)
     setWarnings([])
@@ -368,7 +387,7 @@ function ExportPanel({ config }: { config: PortabilityConfig }) {
         include_known_hosts: includeKnownHosts,
         passphrase: isBundle ? passphrase : undefined,
         note: isBundle ? note : undefined,
-        confirm: plaintext ? confirmed : undefined,
+        confirm: needsConfirmation ? confirmed : undefined,
       })
 
       setWarnings(file.warnings)
@@ -412,11 +431,7 @@ function ExportPanel({ config }: { config: PortabilityConfig }) {
             }}
           >
             {FORMATS.map((f) => (
-              <option key={f.value} value={f.value}
-                      disabled={f.value !== 'bundle' && !config.allow_plaintext_export}>
-                {f.label}
-                {f.value !== 'bundle' && !config.allow_plaintext_export && ' — disabled here'}
-              </option>
+              <option key={f.value} value={f.value}>{f.label}</option>
             ))}
           </select>
         </label>
@@ -451,9 +466,23 @@ function ExportPanel({ config }: { config: PortabilityConfig }) {
         {carriesSecrets && (
           <label className="inline">
             <input type="checkbox" checked={includeSecrets}
-                   onChange={(e) => setIncludeSecrets(e.target.checked)} />
+                   onChange={(e) => {
+                     setIncludeSecrets(e.target.checked)
+                     setConfirmed(false)
+                   }} />
             Include keys and passwords
           </label>
+        )}
+
+        {blockedByPolicy && (
+          <div className="warn">
+            <p>
+              Exporting keys and passwords in the clear is disabled on this
+              server. Export an encrypted bundle instead, or untick
+              &ldquo;Include keys and passwords&rdquo; to take the device list
+              on its own.
+            </p>
+          </div>
         )}
 
         <label className="inline">
@@ -462,15 +491,12 @@ function ExportPanel({ config }: { config: PortabilityConfig }) {
           Include accepted host keys
         </label>
 
-        {plaintext && config.allow_plaintext_export && (
+        {needsConfirmation && !blockedByPolicy && (
           <div className="warn">
             <p>
               <strong>This format is not encrypted.</strong> Anyone who obtains
-              the file can read
-              {carriesSecrets && includeSecrets
-                ? ' every password and private key in it'
-                : ' every device on your network'}
-              . It is recorded in the audit log.
+              the file can read every password and private key in it. It is
+              recorded in the audit log as a critical event.
             </p>
             <label className="inline">
               <input type="checkbox" checked={confirmed}
@@ -480,9 +506,16 @@ function ExportPanel({ config }: { config: PortabilityConfig }) {
           </div>
         )}
 
+        {plaintext && !wouldCarrySecrets && (
+          <p className="muted">
+            This file is not encrypted, but it carries no keys or passwords —
+            only the connections themselves.
+          </p>
+        )}
+
         <div className="row">
           <button className="primary" onClick={() => void run()}
-                  disabled={busy || (plaintext && !confirmed)}>
+                  disabled={busy || blockedByPolicy || (needsConfirmation && !confirmed)}>
             {busy ? 'Preparing…' : 'Export'}
           </button>
         </div>

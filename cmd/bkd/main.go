@@ -2,7 +2,8 @@
 // SSH/SFTP/Telnet/serial client with per-user encrypted credential storage.
 //
 // It ships as a single static binary. Subcommands cover the whole lifecycle an
-// operator needs: serve, migrate, rollback, gen-master-key and version.
+// operator needs: serve, migrate, rollback, gen-master-key, bulk import and
+// export, and version.
 package main
 
 import (
@@ -30,6 +31,8 @@ Commands:
   rollback          Revert the most recent migration and exit
   gen-master-key    Create the server master key file (run once, at install)
   admin             Manage accounts (create-user, list-users, reset-vault, ...)
+  import            Bring connections in from SecureCRT, PuTTY, OpenSSH or CSV
+  export            Write an account's connections to a file
   test-sso          Check the single sign-on configuration against the provider
   version           Print the build version
 
@@ -62,6 +65,10 @@ func run(args []string) error {
 		return cmdGenMasterKey(rest)
 	case "admin":
 		return cmdAdmin(rest)
+	case "import":
+		return cmdImport(rest)
+	case "export":
+		return cmdExport(rest)
 	case "test-sso":
 		return cmdTestSSO(rest)
 	case "version":

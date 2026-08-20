@@ -481,7 +481,7 @@ func TestPlaintextExportIsRefusedWhenDisabled(t *testing.T) {
 
 	for _, format := range []string{"ssh_config", "json", "csv", "securecrt", "putty_reg"} {
 		resp, body := h.exportFile(t, map[string]any{
-			"format": format, "confirm": true,
+			"format": format, "confirm": true, "include_secrets": true,
 		})
 		if resp.StatusCode != http.StatusForbidden {
 			t.Errorf("%s = %d, want 403: %s", format, resp.StatusCode, body)
@@ -501,11 +501,33 @@ func TestPlaintextExportIsRefusedWhenDisabled(t *testing.T) {
 	}
 }
 
+// TestTheGateIsAboutSecretsRatherThanFormats.
+//
+// A user leaving for plain OpenSSH takes their host list with them. That list
+// holds no keys and no passwords, so the switch that exists to stop
+// credentials leaving in the clear has nothing to say about it — and a
+// deployment that refused it would be holding people by making the exit
+// difficult, which is not what the setting is for.
+func TestTheGateIsAboutSecretsRatherThanFormats(t *testing.T) {
+	h := signedInWithVault(t) // plaintext export disabled
+
+	for _, format := range []string{"ssh_config", "json", "csv", "securecrt", "putty_reg"} {
+		resp, body := h.exportFile(t, map[string]any{
+			"format": format, "include_secrets": false,
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s without secrets = %d, want 200: %s", format, resp.StatusCode, body)
+		}
+	}
+}
+
 // TestPlaintextExportNeedsAnExplicitConfirmation.
 func TestPlaintextExportNeedsAnExplicitConfirmation(t *testing.T) {
 	h := signedInWithVault(t, allowPlaintextExport)
 
-	resp, body := h.exportFile(t, map[string]any{"format": "json"})
+	resp, body := h.exportFile(t, map[string]any{
+		"format": "json", "include_secrets": true,
+	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("without confirmation = %d, want 400: %s", resp.StatusCode, body)
 	}
@@ -513,7 +535,9 @@ func TestPlaintextExportNeedsAnExplicitConfirmation(t *testing.T) {
 		t.Errorf("the message does not say what is at stake: %s", body)
 	}
 
-	resp, _ = h.exportFile(t, map[string]any{"format": "json", "confirm": true})
+	resp, _ = h.exportFile(t, map[string]any{
+		"format": "json", "confirm": true, "include_secrets": true,
+	})
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("with confirmation = %d", resp.StatusCode)
 	}

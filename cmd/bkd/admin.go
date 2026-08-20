@@ -305,6 +305,31 @@ func adminResetVault(args []string) error {
 	return nil
 }
 
+// readPassword prompts once, without echoing.
+//
+// Used where the secret is being checked against something that already
+// exists — a vault passphrase — so a typo is caught by the check rather than
+// by a confirmation prompt.
+func readPassword(prompt string) (string, error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		reader := bufio.NewReader(os.Stdin)
+		line, err := reader.ReadString('\n')
+		if err != nil && line == "" {
+			return "", fmt.Errorf("reading passphrase from stdin: %w", err)
+		}
+		return strings.TrimRight(line, "\r\n"), nil
+	}
+
+	fmt.Fprintf(os.Stderr, "%s: ", prompt)
+	secret, err := term.ReadPassword(fd)
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("reading passphrase: %w", err)
+	}
+	return string(secret), nil
+}
+
 // readPasswordTwice prompts without echoing and requires confirmation.
 func readPasswordTwice(prompt string) (string, error) {
 	fd := int(os.Stdin.Fd())

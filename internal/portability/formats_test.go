@@ -4,6 +4,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -519,4 +521,189 @@ func TestCSVEmptyFile(t *testing.T) {
 	if len(imported.Warnings) == 0 {
 		t.Error("no warning about an empty file")
 	}
+}
+
+// --- PuTTY key files ---------------------------------------------------------
+
+// ppkFixture reads one of the real puttygen-produced key files. Using the
+// genuine article here rather than something built in-process is the same
+// choice the ppk package makes, for the same reason: the file a migrating user
+// uploads was written by PuTTY, not by us.
+func ppkFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("ppk", "testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// TestPuTTYKeysAreConvertedAndAttachedToTheirSessions is the migration that
+// used to be impossible without PuTTYgen and a lot of clicking: PuTTY records
+// a key by path, so a session list on its own arrives with the keys missing.
+func TestPuTTYKeysAreConvertedAndAttachedToTheirSessions(t *testing.T) {
+	tree := fstest.MapFS{
+		"sessions/core%20switch": &fstest.MapFile{Data: []byte(
+			"HostName=10.0.0.1\nPortNumber=22\nUserName=netops\nProtocol=ssh\n" +
+				`PublicKeyFile=C:\Users\netops\keys\v3-ed25519.ppk` + "\n")},
+		"sessions/edge": &fstest.MapFile{Data: []byte(
+			"HostName=10.0.1.1\nPortNumber=22\nUserName=netops\n" +
+				`PublicKeyFile=C:\Users\netops\keys\missing.ppk` + "\n")},
+		"keys/v3-ed25519.ppk": &fstest.MapFile{Data: ppkFixture(t, "v3-ed25519.ppk")},
+	}
+
+	imported, err := FromPuTTYDirectory(tree, PuTTYOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(imported.Payload.Credentials) != 1 {
+		t.Fatalf("imported %d credentials, want 1", len(imported.Payload.Credentials))
+	}
+	credential := imported.Payload.Credentials[0]
+
+	if credential.Kind != "ssh_key" {
+		t.Errorf("kind = %q", credential.Kind)
+	}
+
+	// The stored secret must be a usable OpenSSH key, not the .ppk bytes.
+	signer, err := ssh.ParsePrivateKey([]byte(credential.Secret))
+	if err != nil {
+		t.Fatalf("the imported secret is not an OpenSSH private key: %v", err)
+	}
+
+	// And it must be the key PuTTY says it is. The .pub beside the fixture is
+	// puttygen's own statement of that.
+	published, _, _, _, err := ssh.ParseAuthorizedKey(ppkFixture(t, "v3-ed25519.pub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := ssh.FingerprintSHA256(published)
+	if got := ssh.FingerprintSHA256(signer.PublicKey()); got != expected {
+		t.Errorf("imported key is %s, PuTTY's own export is %s", got, expected)
+	}
+	// The fingerprint is stored in the clear so a credential list renders on a
+	// locked vault, which only helps if it is the right one.
+	if credential.Fingerprint != expected {
+		t.Errorf("recorded fingerprint = %q, want %q", credential.Fingerprint, expected)
+	}
+
+	byName := map[string]Session{}
+	for _, session := range imported.Payload.Sessions {
+		byName[session.Name] = session
+	}
+
+	if byName["core switch"].CredentialID != credential.ID {
+		t.Errorf("the session naming the key was not joined to it: %+v", byName["core switch"])
+	}
+	// The other session names a key that was not uploaded, so it gets nothing
+	// and the user is told which file is missing rather than left guessing.
+	if byName["edge"].CredentialID != "" {
+		t.Error("a session was joined to a key that was not in the upload")
+	}
+	if !containsSubstring(imported.Warnings, "missing.ppk") {
+		t.Errorf("no warning names the absent key: %v", imported.Warnings)
+	}
+}
+
+// TestEncryptedPuTTYKeysUseTheSuppliedPassphrase, and the ones it does not fit
+// are named rather than dropped in silence. PuTTY allows a different
+// passphrase on every key, so a partial result is the normal case.
+func TestEncryptedPuTTYKeysUseTheSuppliedPassphrase(t *testing.T) {
+	tree := fstest.MapFS{
+		"sessions/core":           &fstest.MapFile{Data: []byte("HostName=10.0.0.1\n")},
+		"keys/v3-rsa-enc.ppk":     &fstest.MapFile{Data: ppkFixture(t, "v3-rsa-enc.ppk")},
+		"keys/v2-ed25519-enc.ppk": &fstest.MapFile{Data: ppkFixture(t, "v2-ed25519-enc.ppk")},
+	}
+
+	// With the right passphrase, both open.
+	imported, err := FromPuTTYDirectory(tree, PuTTYOptions{
+		KeyPassphrase: "correct horse battery staple",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Payload.Credentials) != 2 {
+		t.Fatalf("imported %d keys, want 2: %v", len(imported.Payload.Credentials), imported.Warnings)
+	}
+
+	// With none, neither does — and the user is told they are encrypted
+	// rather than told the files were unreadable.
+	imported, err = FromPuTTYDirectory(tree, PuTTYOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Payload.Credentials) != 0 {
+		t.Fatalf("imported %d keys without a passphrase", len(imported.Payload.Credentials))
+	}
+	if !containsSubstring(imported.Warnings, "encrypted") {
+		t.Errorf("warnings do not say the keys are encrypted: %v", imported.Warnings)
+	}
+
+	// With the wrong one, the message says so — which is a different problem
+	// with a different fix.
+	imported, err = FromPuTTYDirectory(tree, PuTTYOptions{KeyPassphrase: "not it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Payload.Credentials) != 0 {
+		t.Fatal("a wrong passphrase opened a key")
+	}
+	if !containsSubstring(imported.Warnings, "did not open") {
+		t.Errorf("warnings do not report a wrong passphrase: %v", imported.Warnings)
+	}
+}
+
+// TestOneBadKeyDoesNotStopTheRest. An import that refuses everything because
+// of a single corrupt file is an import nobody can use.
+func TestOneBadKeyDoesNotStopTheRest(t *testing.T) {
+	tree := fstest.MapFS{
+		"sessions/core":      &fstest.MapFile{Data: []byte("HostName=10.0.0.1\n")},
+		"keys/good.ppk":      &fstest.MapFile{Data: ppkFixture(t, "v3-ed25519.ppk")},
+		"keys/truncated.ppk": &fstest.MapFile{Data: ppkFixture(t, "v3-rsa.ppk")[:120]},
+		"keys/nonsense.ppk":  &fstest.MapFile{Data: []byte("this is not a key at all\n")},
+		"keys/notakey.txt":   &fstest.MapFile{Data: []byte("ignored entirely")},
+	}
+
+	imported, err := FromPuTTYDirectory(tree, PuTTYOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(imported.Payload.Credentials) != 1 {
+		t.Fatalf("imported %d keys, want the one good one: %v",
+			len(imported.Payload.Credentials), imported.Warnings)
+	}
+	if len(imported.Warnings) < 2 {
+		t.Errorf("both bad files should be reported: %v", imported.Warnings)
+	}
+}
+
+// TestARegistryExportStillWarnsAboutKeys. A .reg carries settings only, so
+// there is nothing to convert and the advice has to be different.
+func TestARegistryExportStillWarnsAboutKeys(t *testing.T) {
+	const reg = "Windows Registry Editor Version 5.00\r\n\r\n" +
+		`[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\core]` + "\r\n" +
+		`"HostName"="10.0.0.1"` + "\r\n" +
+		`"PublicKeyFile"="C:\\keys\\core.ppk"` + "\r\n"
+
+	imported, err := FromPuTTYRegistry(strings.NewReader(reg), PuTTYOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Payload.Credentials) != 0 {
+		t.Fatal("a registry export cannot carry key material")
+	}
+	if !containsSubstring(imported.Warnings, "core.ppk") {
+		t.Errorf("the named key is not mentioned: %v", imported.Warnings)
+	}
+}
+
+func containsSubstring(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
