@@ -161,6 +161,23 @@ const (
 	DefaultKDFThreads  uint8  = 4
 )
 
+// Ceilings on Argon2id costs.
+//
+// The floors below stop a weak derivation. These stop the opposite, and they
+// matter because cost parameters do not always come from an operator: they
+// travel with every wrapped key, and a portable bundle carries them in a file
+// somebody else wrote. Argon2 allocates its memory cost up front, so a
+// bundle asking for 64 GiB is a denial of service dressed as a file — and one
+// asking for a time cost of four billion is the same attack more slowly.
+//
+// The ceilings are far above anything a real deployment needs: sixteen times
+// the default memory, five times the RFC's recommended time cost.
+const (
+	MaxKDFTime     uint32 = 16
+	MaxKDFMemoryKB uint32 = 1024 * 1024 // 1 GiB
+	MaxKDFThreads  uint8  = 16
+)
+
 // DefaultKDFParams returns interactive-grade Argon2id parameters with a fresh
 // salt.
 func DefaultKDFParams() (KDFParams, error) {
@@ -185,15 +202,27 @@ func NewKDFParams(time uint32, memoryKB uint32, threads uint8) (KDFParams, error
 	return p, nil
 }
 
-// Validate rejects cost parameters too weak to resist offline cracking.
+// Validate bounds cost parameters at both ends.
+//
+// The floors reject a derivation too weak to resist offline cracking. The
+// ceilings reject one that would exhaust the machine: parameters are not
+// always an operator's choice — they travel with every wrapped key and inside
+// every portable bundle — so they are treated as input, not as configuration.
 func (p KDFParams) Validate() error {
 	switch {
 	case p.Time < 1:
 		return errors.New("vault: kdf time must be at least 1")
+	case p.Time > MaxKDFTime:
+		return fmt.Errorf("vault: kdf time %d exceeds the maximum of %d", p.Time, MaxKDFTime)
 	case p.MemoryKB < 16*1024:
 		return fmt.Errorf("vault: kdf memory %d KiB is below the 16384 KiB floor", p.MemoryKB)
+	case p.MemoryKB > MaxKDFMemoryKB:
+		return fmt.Errorf("vault: kdf memory %d KiB exceeds the maximum of %d KiB",
+			p.MemoryKB, MaxKDFMemoryKB)
 	case p.Threads < 1:
 		return errors.New("vault: kdf threads must be at least 1")
+	case p.Threads > MaxKDFThreads:
+		return fmt.Errorf("vault: kdf threads %d exceeds the maximum of %d", p.Threads, MaxKDFThreads)
 	case len(p.Salt) < SaltLen:
 		return fmt.Errorf("vault: kdf salt must be at least %d bytes, got %d", SaltLen, len(p.Salt))
 	}

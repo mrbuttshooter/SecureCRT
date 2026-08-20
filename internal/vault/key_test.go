@@ -337,16 +337,37 @@ func TestKDFParamsValidate(t *testing.T) {
 	}
 
 	for name, p := range map[string]KDFParams{
+		// Too weak to resist offline cracking.
 		"zero time":   {Time: 0, MemoryKB: 64 * 1024, Threads: 4, Salt: good.Salt},
 		"low memory":  {Time: 3, MemoryKB: 8 * 1024, Threads: 4, Salt: good.Salt},
 		"zero thread": {Time: 3, MemoryKB: 64 * 1024, Threads: 0, Salt: good.Salt},
 		"short salt":  {Time: 3, MemoryKB: 64 * 1024, Threads: 4, Salt: []byte("short")},
+
+		// Expensive enough to be an attack. These are not hypothetical:
+		// parameters travel with every wrapped key and inside every portable
+		// bundle, so they arrive from files this process did not write.
+		// Argon2 allocates its memory cost up front, so honouring a request
+		// for 64 GiB is an out-of-memory crash on demand.
+		"absurd memory":    {Time: 3, MemoryKB: 64 * 1024 * 1024, Threads: 4, Salt: good.Salt},
+		"memory just over": {Time: 3, MemoryKB: MaxKDFMemoryKB + 1, Threads: 4, Salt: good.Salt},
+		"absurd time":      {Time: 4_000_000_000, MemoryKB: 64 * 1024, Threads: 4, Salt: good.Salt},
+		"time just over":   {Time: MaxKDFTime + 1, MemoryKB: 64 * 1024, Threads: 4, Salt: good.Salt},
+		"absurd threads":   {Time: 3, MemoryKB: 64 * 1024, Threads: 255, Salt: good.Salt},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := p.Validate(); err == nil {
 				t.Fatal("expected rejection")
 			}
 		})
+	}
+
+	// And the ceilings themselves are usable, so an operator who wants the
+	// most expensive derivation this permits is not refused.
+	atTheLimit := KDFParams{
+		Time: MaxKDFTime, MemoryKB: MaxKDFMemoryKB, Threads: MaxKDFThreads, Salt: good.Salt,
+	}
+	if err := atTheLimit.Validate(); err != nil {
+		t.Errorf("the maximum permitted parameters were refused: %v", err)
 	}
 }
 

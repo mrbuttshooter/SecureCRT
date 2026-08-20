@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/mrbuttshooter/securecrt/internal/vault"
 )
 
 // Version is stamped at build time via -ldflags.
@@ -362,14 +364,31 @@ func (c Config) Validate() error {
 	} else if !filepath.IsAbs(c.Vault.MasterKeyPath) {
 		errs = append(errs, fmt.Errorf("vault.master_key_path %q must be absolute", c.Vault.MasterKeyPath))
 	}
+	// Bounded at both ends. The floors keep a derivation strong enough to
+	// resist offline cracking; the ceilings stop a typo in a config file
+	// producing a server that allocates gigabytes on every unlock and appears
+	// to hang. They are the same limits the vault enforces on parameters
+	// arriving from anywhere else.
 	if c.Vault.Argon2Time < 1 {
 		errs = append(errs, errors.New("vault.argon2_time must be at least 1"))
+	}
+	if c.Vault.Argon2Time > vault.MaxKDFTime {
+		errs = append(errs, fmt.Errorf("vault.argon2_time is %d; the maximum is %d",
+			c.Vault.Argon2Time, vault.MaxKDFTime))
 	}
 	if c.Vault.Argon2MemoryKB < 16*1024 {
 		errs = append(errs, fmt.Errorf("vault.argon2_memory_kb is %d; must be at least 16384 (16 MiB) to resist offline cracking", c.Vault.Argon2MemoryKB))
 	}
+	if c.Vault.Argon2MemoryKB > vault.MaxKDFMemoryKB {
+		errs = append(errs, fmt.Errorf("vault.argon2_memory_kb is %d; the maximum is %d (%d MiB)",
+			c.Vault.Argon2MemoryKB, vault.MaxKDFMemoryKB, vault.MaxKDFMemoryKB/1024))
+	}
 	if c.Vault.Argon2Threads < 1 {
 		errs = append(errs, errors.New("vault.argon2_threads must be at least 1"))
+	}
+	if c.Vault.Argon2Threads > vault.MaxKDFThreads {
+		errs = append(errs, fmt.Errorf("vault.argon2_threads is %d; the maximum is %d",
+			c.Vault.Argon2Threads, vault.MaxKDFThreads))
 	}
 	if c.Vault.UnlockTTL <= 0 {
 		errs = append(errs, errors.New("vault.unlock_ttl must be positive"))
