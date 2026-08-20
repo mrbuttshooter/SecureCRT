@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -364,7 +365,10 @@ func pathID(path, prefix string) string {
 
 // writeTreeError maps store errors to responses.
 func (a *API) writeTreeError(w http.ResponseWriter, err error, context string) {
-	var notEmpty *sessions.ErrFolderNotEmpty
+	var (
+		notEmpty  *sessions.ErrFolderNotEmpty
+		jumpInUse *sessions.ErrJumpInUse
+	)
 
 	switch {
 	case errors.Is(err, sessions.ErrNotFound):
@@ -384,6 +388,38 @@ func (a *API) writeTreeError(w http.ResponseWriter, err error, context string) {
 				"sessions": notEmpty.Sessions,
 			},
 		})
+
+	case errors.As(err, &jumpInUse):
+		// Named, not counted. "Three connections use this" leaves somebody
+		// hunting; naming them means they can go and change those three.
+		writeJSON(w, a.log, http.StatusConflict, map[string]any{
+			"error": map[string]any{
+				"code": "jump_host_in_use",
+				"message": "Other connections are reached through this one. " +
+					"Change their route first, or delete them.",
+				"used_by": jumpInUse.Names,
+			},
+		})
+
+	case errors.Is(err, sessions.ErrJumpNotFound):
+		writeError(w, a.log, http.StatusBadRequest, "jump_host_not_found",
+			"One of the jump hosts on that route no longer exists.")
+
+	case errors.Is(err, sessions.ErrJumpSelf):
+		writeError(w, a.log, http.StatusBadRequest, "jump_chain_invalid",
+			"A connection cannot be reached through itself.")
+
+	case errors.Is(err, sessions.ErrJumpCycle):
+		writeError(w, a.log, http.StatusBadRequest, "jump_chain_invalid",
+			"That route loops back on itself, so it would never arrive.")
+
+	case errors.Is(err, sessions.ErrJumpTooLong):
+		writeError(w, a.log, http.StatusBadRequest, "jump_chain_invalid",
+			fmt.Sprintf("A route can pass through at most %d hosts.", sessions.MaxJumpChain))
+
+	case errors.Is(err, sessions.ErrJumpProtocol):
+		writeError(w, a.log, http.StatusBadRequest, "jump_chain_invalid",
+			"Only SSH connections can be used as jump hosts.")
 
 	case errors.Is(err, sessions.ErrCycle):
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest,

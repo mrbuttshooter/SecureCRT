@@ -59,6 +59,13 @@ func (s *Store) CreateSession(ctx context.Context, p CreateSessionParams) (Sessi
 		}
 	}
 
+	// Validated before it is stored, not merely on the way out. The importer
+	// and the bundle restore both write chains through here, so this is the
+	// one place that catches a chain nobody typed.
+	if err := s.ValidateJumpChain(ctx, p.OwnerID, "", p.JumpChain); err != nil {
+		return Session{}, err
+	}
+
 	jumpJSON, err := json.Marshal(orEmpty(p.JumpChain))
 	if err != nil {
 		return Session{}, fmt.Errorf("sessions: encode jump chain: %w", err)
@@ -267,6 +274,12 @@ func (s *Store) UpdateSession(ctx context.Context, ownerID, id string, p UpdateS
 		sess.CredentialID = *p.CredentialID
 	}
 	if p.JumpChain != nil {
+		// Only when the chain itself is being set. Re-validating on every
+		// unrelated edit would mean renaming a connection failing because a
+		// hop somebody else owns was deleted last week.
+		if err := s.ValidateJumpChain(ctx, ownerID, id, *p.JumpChain); err != nil {
+			return Session{}, err
+		}
 		sess.JumpChain = orEmpty(*p.JumpChain)
 	}
 	if p.Settings != nil {
@@ -304,6 +317,19 @@ func (s *Store) DeleteSession(ctx context.Context, ownerID, id string) error {
 	if _, err := s.GetSession(ctx, ownerID, id); err != nil {
 		return err
 	}
+
+	// A jump chain is a JSON array of identifiers with no foreign key behind
+	// it, so deleting a bastion would leave every connection behind it
+	// pointing at nothing — and they would fail at dial time with an error
+	// about a host the user did not know was involved. Refuse, and name them.
+	dependents, err := s.jumpDependents(ctx, ownerID, id)
+	if err != nil {
+		return err
+	}
+	if len(dependents) > 0 {
+		return &ErrJumpInUse{Names: dependents}
+	}
+
 	if _, err := s.db.Exec(ctx, `DELETE FROM sessions WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("sessions: delete: %w", err)
 	}

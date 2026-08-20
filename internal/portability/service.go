@@ -538,6 +538,18 @@ func (s *Service) Import(ctx context.Context, key vault.Key, payload Payload, op
 
 		if _, err := s.sessions.UpdateSession(ctx, opts.UserID, newID,
 			sessions.UpdateSessionParams{JumpChain: &chain}); err != nil {
+			// A refused chain must not abandon the import. Chains are now
+			// validated on the way in, and a bundle can legitimately carry
+			// one this instance will not accept — a loop, or a hop that
+			// arrived as a conflict and was skipped. Losing eighty
+			// connections because one of them had a bad route would be a far
+			// worse outcome than losing the route.
+			if isChainRefusal(err) {
+				result.Warnings = append(result.Warnings, fmt.Sprintf(
+					"%q could not keep its jump chain: %v. The connection was "+
+						"imported without it; set a route by hand.", session.Name, err))
+				continue
+			}
 			return result, fmt.Errorf("portability: set the jump chain for %q: %w", session.Name, err)
 		}
 	}
@@ -638,4 +650,18 @@ func unmarshalSettings(raw json.RawMessage) (sessions.Settings, error) {
 		return sessions.Settings{}, err
 	}
 	return out, nil
+}
+
+// isChainRefusal reports whether an error is the session store declining a
+// jump chain, as opposed to something having gone wrong.
+//
+// The distinction matters because the two call for opposite responses: a
+// refused chain is one connection's route and the import continues without
+// it, while a database failure means nothing else is going to work either.
+func isChainRefusal(err error) bool {
+	return errors.Is(err, sessions.ErrJumpNotFound) ||
+		errors.Is(err, sessions.ErrJumpSelf) ||
+		errors.Is(err, sessions.ErrJumpCycle) ||
+		errors.Is(err, sessions.ErrJumpTooLong) ||
+		errors.Is(err, sessions.ErrJumpProtocol)
 }
