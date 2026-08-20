@@ -27,11 +27,40 @@ const (
 	pingInterval = 30 * time.Second
 )
 
+// Broadcaster resolves the other terminals a keystroke should also reach.
+//
+// Supplied by the caller rather than looked up here, because deciding which
+// terminals a person may type into is an authorisation question and this
+// package has no idea who anybody is.
+type Broadcaster interface {
+	// Targets returns the terminals to mirror to, or an error naming the
+	// first one that is not available. An error means nothing is mirrored:
+	// half a rack receiving a command is worse than none of it.
+	Targets(ids []string) ([]*Terminal, error)
+
+	// GroupChanged records a broadcast group being set or cleared. Called
+	// once per change, never per keystroke — the audit log wants "at 03:14
+	// this person put forty production switches on one keyboard", not four
+	// thousand rows of individual letters.
+	GroupChanged(primary *Terminal, targets []*Terminal)
+}
+
 // Bridge carries one browser's WebSocket to one Terminal.
 type Bridge struct {
 	conn *websocket.Conn
 	term *Terminal
 	log  *slog.Logger
+
+	broadcaster Broadcaster
+
+	// mirror is the other terminals this browser's keystrokes also reach.
+	//
+	// Held on the bridge rather than on the Terminal, so it belongs to one
+	// browser session: a second tab attached to the same terminal does not
+	// inherit somebody else's broadcast group, and closing the tab ends it.
+	// A broadcast that outlived the window it was set up in is how somebody
+	// reloads a page and types `reload` into forty switches.
+	mirror []*Terminal
 }
 
 // NewBridge builds a Bridge.
@@ -41,6 +70,12 @@ func NewBridge(conn *websocket.Conn, term *Terminal, log *slog.Logger) *Bridge {
 	}
 	conn.SetReadLimit(maxIncomingFrame)
 	return &Bridge{conn: conn, term: term, log: log}
+}
+
+// WithBroadcast lets this bridge mirror keystrokes to other terminals.
+func (b *Bridge) WithBroadcast(broadcaster Broadcaster) *Bridge {
+	b.broadcaster = broadcaster
+	return b
 }
 
 // Run pumps in both directions until the terminal ends or the browser leaves.
@@ -120,6 +155,15 @@ func (b *Bridge) readFromBrowser(ctx context.Context) error {
 				return err
 			}
 
+			// Mirrored after this terminal has taken it, so the tab the
+			// person is looking at is never behind the ones they are not.
+			//
+			// A mirror that has ended — the far end hung up, somebody closed
+			// it from another tab — is dropped from the group rather than
+			// failing the keystroke. The alternative is that one dead switch
+			// stops somebody typing at the other thirty-nine.
+			b.mirrorInput(ctx, data)
+
 		case websocket.MessageText:
 			if err := b.handleControl(ctx, data); err != nil {
 				return err
@@ -152,6 +196,9 @@ func (b *Bridge) handleControl(ctx context.Context, data []byte) error {
 			b.log.Debug("resize failed", "terminal", b.term.ID, "error", err)
 		}
 
+	case ControlBroadcast:
+		b.setBroadcast(ctx, msg.Terminals)
+
 	case ControlPing:
 		b.sendControl(ctx, Control{Type: ControlPong})
 
@@ -161,6 +208,79 @@ func (b *Bridge) handleControl(ctx context.Context, data []byte) error {
 		b.log.Debug("ignoring unknown control message", "type", msg.Type)
 	}
 	return nil
+}
+
+// setBroadcast puts this browser's keyboard onto several terminals, or takes
+// it off them.
+//
+// Every target is resolved before any of them is used, so a group naming a
+// terminal that has gone is refused entirely rather than silently smaller
+// than the person believes. Somebody who thinks they are typing at forty
+// devices and is typing at thirty-nine has a problem they will not discover
+// until it matters.
+func (b *Bridge) setBroadcast(ctx context.Context, ids []string) {
+	if b.broadcaster == nil {
+		b.sendControl(ctx, errorMessage(ErrCodeInternal,
+			"This server does not support broadcasting."))
+		return
+	}
+
+	if len(ids) == 0 {
+		b.mirror = nil
+		b.broadcaster.GroupChanged(b.term, nil)
+		b.sendControl(ctx, Control{Type: ControlBroadcast})
+		return
+	}
+
+	targets, err := b.broadcaster.Targets(ids)
+	if err != nil {
+		b.sendControl(ctx, errorMessage(ErrCodeNotFound,
+			"One of those terminals is no longer open, so nothing was joined."))
+		return
+	}
+
+	// The terminal this browser is looking at is written directly and must
+	// not also be mirrored to, or every keystroke would arrive twice.
+	b.mirror = b.mirror[:0]
+	for _, target := range targets {
+		if target.ID != b.term.ID {
+			b.mirror = append(b.mirror, target)
+		}
+	}
+
+	b.broadcaster.GroupChanged(b.term, b.mirror)
+	b.sendControl(ctx, Control{Type: ControlBroadcast, Terminals: idsOf(b.mirror)})
+}
+
+// mirrorInput sends one keystroke to the rest of the group.
+func (b *Bridge) mirrorInput(ctx context.Context, data []byte) {
+	if len(b.mirror) == 0 {
+		return
+	}
+
+	live := b.mirror[:0]
+	for _, target := range b.mirror {
+		if err := target.Write(data); err != nil {
+			b.log.Debug("dropping a terminal from a broadcast group",
+				"terminal", target.ID, "error", err)
+			b.sendControl(ctx, Control{
+				Type: ControlWarning, Code: "broadcast_target_ended",
+				Message: target.Label + " has ended and left the broadcast group.",
+			})
+			continue
+		}
+		live = append(live, target)
+	}
+	b.mirror = live
+}
+
+// idsOf names a group, for the acknowledgement.
+func idsOf(terminals []*Terminal) []string {
+	out := make([]string, 0, len(terminals))
+	for _, t := range terminals {
+		out = append(out, t.ID)
+	}
+	return out
 }
 
 // writeToBrowser forwards terminal output and keeps the connection alive.

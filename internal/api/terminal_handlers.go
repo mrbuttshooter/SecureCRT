@@ -131,10 +131,69 @@ func (a *API) handleTerminalSocket(w http.ResponseWriter, r *http.Request) {
 	defer stopRelay()
 	go a.relayTriggers(relay, conn, term, u, r, triggerEvents)
 
-	bridge := terminal.NewBridge(conn, term, a.log)
+	bridge := terminal.NewBridge(conn, term, a.log).
+		WithBroadcast(&broadcaster{api: a, user: u, request: r})
 	if err := bridge.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		a.log.Debug("terminal bridge ended", "terminal", term.ID, "error", err)
 	}
+}
+
+// broadcaster resolves and records a browser's broadcast group.
+//
+// Lives here rather than in the terminal package because deciding which
+// terminals a person may type into is an authorisation question, and that
+// package has no idea who anybody is.
+type broadcaster struct {
+	api     *API
+	user    users.User
+	request *http.Request
+}
+
+// Targets resolves the group, refusing it entirely if any member has gone.
+//
+// Ownership is checked on every one: terminals.Get takes the user id, so a
+// group naming somebody else's terminal fails here rather than becoming a way
+// to type into a colleague's session.
+func (b *broadcaster) Targets(ids []string) ([]*terminal.Terminal, error) {
+	out := make([]*terminal.Terminal, 0, len(ids))
+	for _, id := range ids {
+		term, err := b.api.terminals.Get(b.user.ID, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, term)
+	}
+	return out, nil
+}
+
+// GroupChanged records a broadcast group being set or cleared.
+//
+// Once per change and never per keystroke. The question an incident review
+// asks is "who put forty production switches on one keyboard, and when" —
+// four thousand rows of individual letters would answer it worse, not better,
+// and the transcripts already hold what was typed.
+func (b *broadcaster) GroupChanged(primary *terminal.Terminal, targets []*terminal.Terminal) {
+	labels := make([]string, 0, len(targets))
+	for _, target := range targets {
+		labels = append(labels, target.Label)
+	}
+
+	action := audit.ActionBroadcastStarted
+	severity := audit.SeverityNotice
+	if len(targets) == 0 {
+		action = audit.ActionBroadcastStopped
+		severity = audit.SeverityInfo
+	}
+
+	b.api.audit.Record(b.request.Context(), audit.Event{
+		ActorID: b.user.ID, ActorEmail: b.user.Email, IPAddress: b.api.clientIP(b.request),
+		Action: action, Severity: severity, TargetType: "terminal",
+		TargetID: primary.ID, TargetLabel: primary.Label,
+		Detail: map[string]any{
+			"terminals": len(targets) + 1,
+			"joined":    labels,
+		},
+	})
 }
 
 // relayTriggers forwards rule firings to the browser and to the audit log.

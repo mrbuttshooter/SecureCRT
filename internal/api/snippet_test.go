@@ -45,14 +45,21 @@ func (h *harness) openTerminalOn(t *testing.T, sessionID string) (*socketView, s
 		view.waitFor(t, "PROMPT>", "", 20*time.Second)
 	}
 
+	// Found by the saved connection it came from rather than by position.
+	// The list is ordered now, but "the last one" would still be wrong the
+	// moment a test opens two terminals on one connection — and the failure
+	// is a test that sends to the wrong device and blames the feature.
 	_, body := h.get("/api/terminals")
 	terminals, _ := body["terminals"].([]any)
-	if len(terminals) == 0 {
-		t.Fatal("no live terminal")
+	for i := len(terminals) - 1; i >= 0; i-- {
+		info, _ := terminals[i].(map[string]any)
+		if got, _ := info["session_id"].(string); got == sessionID {
+			id, _ := info["id"].(string)
+			return view, id
+		}
 	}
-	newest, _ := terminals[len(terminals)-1].(map[string]any)
-	id, _ := newest["id"].(string)
-	return view, id
+	t.Fatalf("no live terminal for %s: %v", sessionID, body)
+	return nil, ""
 }
 
 // TestASnippetIsTypedAtATerminal, with its parameters filled in.

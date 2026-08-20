@@ -40,6 +40,14 @@ const (
 	// ControlHostKeyDecision answers a host key prompt.
 	ControlHostKeyDecision ControlType = "host_key_decision"
 
+	// ControlBroadcast puts this browser's keyboard onto several terminals
+	// at once, or — with an empty list — takes it off them.
+	//
+	// Server-side fan-out rather than the browser writing to several sockets,
+	// which is the difference between a feature that is audited by
+	// construction and one that is audited if the client remembers to say so.
+	ControlBroadcast ControlType = "broadcast"
+
 	// ControlPing lets the browser check the connection is alive. The
 	// WebSocket layer has its own ping, but this one traverses the whole
 	// path including the SSH session's health.
@@ -125,6 +133,11 @@ type Control struct {
 
 	// Trigger carries a rule that fired, for ControlTrigger.
 	Trigger *TriggerEvent `json:"trigger,omitempty"`
+
+	// Terminals names a broadcast group, in both directions: the browser
+	// sends the terminals to join, and the acknowledgement carries the ones
+	// that were joined.
+	Terminals []string `json:"terminals,omitempty"`
 }
 
 // Error codes carried by ControlError.

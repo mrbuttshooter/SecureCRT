@@ -110,6 +110,13 @@ const (
 	// out what that was.
 	ActionSnippetSent Action = "snippet.sent"
 
+	// ActionBroadcastStarted records one keyboard being put onto several
+	// terminals. Notice-level: "who typed the same thing at forty production
+	// switches, and when" is the first question after a bad afternoon, and it
+	// has to outlive ordinary retention.
+	ActionBroadcastStarted Action = "terminal.broadcast.started"
+	ActionBroadcastStopped Action = "terminal.broadcast.stopped"
+
 	// Files. Reads and writes against a managed host are recorded because
 	// "who took a copy of the running configuration, and when" is the first
 	// question asked after an incident.
@@ -190,8 +197,9 @@ var minimumSeverity = map[Action]Severity{
 
 	// Forwarded keys can be used by the far host for as long as the session
 	// lasts. That is the point of agent forwarding and also its whole risk.
-	ActionAgentForwarded:  SeverityNotice,
-	ActionSessionRecorded: SeverityNotice,
+	ActionAgentForwarded:   SeverityNotice,
+	ActionSessionRecorded:  SeverityNotice,
+	ActionBroadcastStarted: SeverityNotice,
 }
 
 var severityRank = map[Severity]int{

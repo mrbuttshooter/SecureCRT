@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -648,6 +649,17 @@ func (m *Manager) ListForUser(userID string) []Info {
 		t.mu.Unlock()
 		out = append(out, info)
 	}
+
+	// Oldest first, because the map this came out of has no order at all and
+	// a list that rearranges itself between refreshes is a list nobody can
+	// use. Ties broken by identifier, which is time-ordered, so two terminals
+	// opened in the same instant still come out the same way twice.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out
 }
 
