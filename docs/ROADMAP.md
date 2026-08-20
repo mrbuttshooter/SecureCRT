@@ -32,13 +32,32 @@ authentication for everyone who signs in through it, so WebAuthn would only
 protect the handful of break-glass local accounts. It is worth doing, but not
 before the terminal exists.
 
-## Phase 2 — SSH terminal
+## Phase 2 — SSH terminal ✅
 
-WebSocket ↔ SSH PTY bridge; xterm.js with the WebGL renderer; true colour,
-UTF-8, mouse reporting, bracketed paste, configurable scrollback; tabs and
-split panes; session tree with nested folders, drag-and-drop and inherited
-folder defaults; host key verification UI; keyboard-interactive auth;
-keepalive, retry, and reconnect with server-side session survival.
+- [x] SSH client layer with mandatory host key verification
+- [x] Known-hosts store; personal and org-wide trust, changed keys a hard fail
+- [x] Saved connections in nested folders, with inherited folder defaults
+- [x] WebSocket ↔ SSH pty bridge, with server-side session survival
+- [x] REST and WebSocket API for the tree, terminals and known hosts
+- [x] xterm.js with the WebGL renderer, falling back to DOM without a GPU
+- [x] True colour, Unicode 11 widths, mouse reporting, bracketed paste
+- [x] Configurable scrollback, colour schemes and font size
+- [x] Tabs, a two-pane split, and scrollback search
+- [x] Drag-and-drop between folders; filter across the whole tree
+- [x] Host key approval and changed-key alarm in the interface
+- [x] Keyboard-interactive auth; keepalive; reconnect with replayed scrollback
+- [x] Browser end-to-end suite against a real SSH server on a real pty
+
+Two things named in the original scope moved out, and are worth being explicit
+about rather than quietly dropping:
+
+- **Arbitrary split layouts.** What shipped is one split into two panes. A
+  full pane tree — nested horizontal and vertical splits, dragged dividers —
+  is a substantial piece of interface work whose value is much lower than
+  SFTP, so it waits.
+- **Telnet and serial.** The saved-connection schema carries the protocol and
+  the interface offers it, but only SSH is wired to a transport. Telnet and
+  serial arrive with Phase 5.
 
 ## Phase 3 — SFTP
 

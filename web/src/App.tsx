@@ -6,8 +6,10 @@ import { VaultGate } from './views/VaultGate'
 import { Credentials } from './views/Credentials'
 import { Sessions } from './views/Sessions'
 import { Security } from './views/Security'
+import { Workspace } from './views/Workspace'
+import { KnownHosts } from './views/KnownHosts'
 
-type Tab = 'credentials' | 'sessions' | 'security'
+type Tab = 'terminal' | 'credentials' | 'hosts' | 'sessions' | 'security'
 
 /**
  * App decides what to show from a single whoami response.
@@ -22,7 +24,7 @@ export function App() {
   const [me, setMe] = useState<Whoami | null>(null)
   const [loading, setLoading] = useState(true)
   const [fatal, setFatal] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('credentials')
+  const [tab, setTab] = useState<Tab>('terminal')
 
   const refresh = useCallback(async () => {
     try {
@@ -92,7 +94,7 @@ export function App() {
   }
 
   return (
-    <main className="shell">
+    <main className={'shell' + (tab === 'terminal' ? ' shell-wide' : '')}>
       <header className="bar">
         <div>
           <h1>Bridgekeeper</h1>
@@ -111,15 +113,29 @@ export function App() {
       </header>
 
       <nav className="tabs">
+        <button aria-current={tab === 'terminal' ? 'page' : undefined}
+                onClick={() => setTab('terminal')}>Terminal</button>
         <button aria-current={tab === 'credentials' ? 'page' : undefined}
                 onClick={() => setTab('credentials')}>Credentials</button>
+        <button aria-current={tab === 'hosts' ? 'page' : undefined}
+                onClick={() => setTab('hosts')}>Known hosts</button>
         <button aria-current={tab === 'sessions' ? 'page' : undefined}
-                onClick={() => setTab('sessions')}>Sessions</button>
+                onClick={() => setTab('sessions')}>Signed in</button>
         <button aria-current={tab === 'security' ? 'page' : undefined}
                 onClick={() => setTab('security')}>Security</button>
       </nav>
 
+      {/*
+        The workspace stays mounted once it has been opened. Unmounting it to
+        visit another tab would dispose every xterm instance and lose the
+        visible scrollback — the server would still hold the sessions, but
+        "switch tab and back" must not wipe the screen.
+      */}
+      <div hidden={tab !== 'terminal'} className="tabpanel">
+        <Workspace />
+      </div>
       {tab === 'credentials' && <Credentials />}
+      {tab === 'hosts' && <KnownHosts />}
       {tab === 'sessions' && <Sessions />}
       {tab === 'security' && <Security me={me} onChanged={refresh} />}
     </main>

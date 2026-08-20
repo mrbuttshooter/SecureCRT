@@ -70,6 +70,10 @@ type Terminal struct {
 	// terminals.
 	detachedAt time.Time
 
+	// attachments counts how many browsers have taken this terminal over,
+	// so the second and later ones can be told apart from the first.
+	attachments int
+
 	done chan struct{}
 }
 
@@ -320,12 +324,12 @@ func (t *Terminal) pump() {
 // browser may be attached: a second attach displaces the first, which is what
 // happens when someone reopens a tab after a network drop and the old
 // connection has not yet timed out.
-func (t *Terminal) Attach() (replay []byte, output <-chan []byte, err error) {
+func (t *Terminal) Attach() (Attachment, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if t.closed {
-		return nil, nil, ErrTerminalClosed
+		return Attachment{}, ErrTerminalClosed
 	}
 
 	if t.attached != nil {
@@ -336,8 +340,28 @@ func (t *Terminal) Attach() (replay []byte, output <-chan []byte, err error) {
 	ch := make(chan []byte, 256)
 	t.attached = ch
 	t.detachedAt = time.Time{}
+	t.attachments++
 
-	return t.replay.Bytes(), ch, nil
+	return Attachment{
+		Replay:     t.replay.Bytes(),
+		Output:     ch,
+		Reattached: t.attachments > 1,
+	}, nil
+}
+
+// Attachment is what a browser gets when it takes over a terminal.
+type Attachment struct {
+	// Replay is the recent scrollback, to be written before live output so
+	// the terminal reads in the order it was printed.
+	Replay []byte
+
+	// Output carries live bytes from the remote shell.
+	Output <-chan []byte
+
+	// Reattached distinguishes returning to a running session from starting
+	// one. The interface says so, because "reconnected" and "connected" mean
+	// very different things to someone who just watched their screen freeze.
+	Reattached bool
 }
 
 // Detach disconnects the current browser, leaving the shell running.

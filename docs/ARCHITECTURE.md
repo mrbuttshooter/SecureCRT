@@ -129,6 +129,30 @@ shutdown still leaves nothing recoverable in memory.
 - `GET /readyz` — readiness. Pings the database and returns 503 if it is
   unreachable.
 
+## The terminal
+
+A terminal is a server-side object, not a WebSocket. The SSH connection is
+owned by `internal/terminal`, and a browser attaches to it and detaches from
+it; closing a laptop lid detaches, it does not disconnect. Each terminal keeps
+a bounded ring buffer of recent output, which is replayed on reattach so the
+screen comes back as it was rather than blank. A terminal nobody has attached
+to for fifteen minutes is reaped.
+
+The wire protocol uses what WebSocket already gives:
+
+| Frame | Carries |
+|---|---|
+| binary | raw terminal bytes, both directions |
+| text | one JSON control message: resize, status, host key, error, close |
+
+Terminal traffic is overwhelmingly raw bytes, so leaving them unwrapped costs
+nothing per keystroke and does not inflate output by a third the way base64
+would when someone cats a large file.
+
+The upgrade checks `Origin` explicitly. A WebSocket is not covered by the
+same-origin policy, so without that check any page on the internet could open
+a terminal using a signed-in visitor's cookies.
+
 ## Layout
 
 | Path | Responsibility |
@@ -139,9 +163,15 @@ shutdown still leaves nothing recoverable in memory.
 | `internal/store` | schema, migrations, portable data access |
 | `internal/vault` | envelope encryption and the in-memory key cache |
 | `internal/logging` | structured logging and redaction helpers |
-| `internal/auth` | passwords, MFA, tokens, SSO *(phase 1)* |
+| `internal/auth` | passwords, MFA, tokens, SSO |
+| `internal/credentials` | credential CRUD, SSH key generation and import |
+| `internal/sessions` | saved connections, folders, inherited defaults |
+| `internal/hostkeys` | host key trust decisions, personal and org-wide |
+| `internal/terminal` | live SSH sessions, the WebSocket bridge, survival |
 | `internal/proto/*` | SSH, SFTP, Telnet, serial, tunnels *(phases 2–6)* |
 | `internal/portability` | import and export adapters *(phase 4)* |
-| `internal/api`, `internal/wsmux` | REST and WebSocket surface *(phases 1–2)* |
+| `internal/api` | REST and WebSocket surface |
+| `internal/audit` | append-only event writer |
 | `web/` | React frontend, embedded into the binary |
+| `tools/` | test fixtures behind the `tools` build tag, never shipped |
 | `deploy/` | systemd unit, install script, example configs |

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,10 +24,25 @@ import (
 type sshTestServer struct {
 	Host string
 	Port int
+
+	// authAttempts counts how many times a credential was offered. A test
+	// that declines a host key asserts this stayed at zero, which is the
+	// property that matters: refusing an unrecognised fingerprint must mean
+	// nothing was sent, not merely that the session did not open.
+	mu           sync.Mutex
+	authAttempts int
+}
+
+func (s *sshTestServer) attempts() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.authAttempts
 }
 
 func startSSH(t *testing.T, password string) *sshTestServer {
 	t.Helper()
+
+	server := &sshTestServer{}
 
 	seed := make([]byte, ed25519.SeedSize)
 	if _, err := rand.Read(seed); err != nil {
@@ -38,8 +54,13 @@ func startSSH(t *testing.T, password string) *sshTestServer {
 	}
 
 	srv := &gssh.Server{
-		HostSigners:     []gssh.Signer{signer},
-		PasswordHandler: func(_ gssh.Context, given string) bool { return given == password },
+		HostSigners: []gssh.Signer{signer},
+		PasswordHandler: func(_ gssh.Context, given string) bool {
+			server.mu.Lock()
+			server.authAttempts++
+			server.mu.Unlock()
+			return given == password
+		},
 		Handler: func(s gssh.Session) {
 			if _, _, isPty := s.Pty(); !isPty {
 				_ = s.Exit(1)
@@ -80,7 +101,9 @@ func startSSH(t *testing.T, password string) *sshTestServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &sshTestServer{Host: host, Port: port}
+	server.Host = host
+	server.Port = port
+	return server
 }
 
 // --- harness helpers ---------------------------------------------------------
@@ -255,6 +278,14 @@ func TestTerminalEndToEnd(t *testing.T) {
 		t.Fatal("no terminal ID was announced; the browser could not reattach after a drop")
 	}
 
+	// The host was offered a credential, which is what makes the counter
+	// meaningful when TestDecliningTheHostKeySendsNothing asserts it stayed
+	// at zero. Without this the negative assertion could pass for the wrong
+	// reason — a counter nothing ever increments proves nothing.
+	if n := srv.attempts(); n == 0 {
+		t.Error("the host recorded no authentication attempt on a successful connection")
+	}
+
 	// And it must be listed.
 	_, body := h.get("/api/terminals")
 	list, _ := body["terminals"].([]any)
@@ -308,6 +339,19 @@ func TestTerminalSurvivesADroppedSocket(t *testing.T) {
 
 	view2.type_(t, "after returning\n")
 	view2.waitFor(t, "after returning", "", 10*time.Second)
+
+	// The status must say "reattached", not "connected". They mean very
+	// different things to someone who just watched their screen freeze, and
+	// the interface says so.
+	var status string
+	for _, c := range view2.controls {
+		if c.Type == terminal.ControlStatus && c.Status != "" {
+			status = c.Status
+		}
+	}
+	if status != terminal.StatusReattached {
+		t.Errorf("status after reattaching = %q, want %q", status, terminal.StatusReattached)
+	}
 }
 
 // TestDecliningTheHostKeySendsNothing confirms a refused key means no
@@ -340,6 +384,14 @@ func TestDecliningTheHostKeySendsNothing(t *testing.T) {
 	known, _ := hosts["known_hosts"].([]any)
 	if len(known) != 0 {
 		t.Fatalf("%d host keys were recorded despite the user declining", len(known))
+	}
+
+	// The point of the whole exercise: the host was never offered anything to
+	// authenticate with. Verification happens inside the handshake, before
+	// any credential is sent, so a declined fingerprint leaks nothing — not
+	// even a username paired with a password attempt.
+	if n := srv.attempts(); n != 0 {
+		t.Fatalf("%d credentials were offered to a host whose key was declined", n)
 	}
 }
 

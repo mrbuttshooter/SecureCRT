@@ -15,14 +15,16 @@ saved passwords from any machine, with nothing installed locally.
 
 ## Status
 
-Early development. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase plan.
+Usable for its core purpose: sign in, store credentials, and open SSH
+sessions in a browser. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase
+plan and for what each completed phase actually contains.
 
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Foundations: config, storage, build, deploy | **complete** |
 | 1 | Identity, SSO, MFA & credential vault | **complete** |
-| 2 | SSH terminal | next |
-| 3 | SFTP file transfer | not started |
+| 2 | SSH terminal | **complete** |
+| 3 | SFTP file transfer | next |
 | 4 | Import / export (SecureCRT, PuTTY, OpenSSH) | not started |
 | 5 | Tunnels & jump hosts | not started |
 | 6 | Telnet, serial & console servers | not started |
@@ -105,7 +107,8 @@ error code when something is wrong, which beats a blank sign-in page.
 make test          # unit tests, on SQLite and — if BKD_TEST_POSTGRES_DSN is
                    # set — PostgreSQL as well
 make test-race     # under the race detector
-make e2e           # browser tests against a freshly provisioned instance
+make e2e           # browser tests against a freshly provisioned instance,
+                   # including a real SSH server on a real pty
 make sec           # gosec
 make vuln          # govulncheck
 make release       # frontend + static binary
@@ -114,6 +117,11 @@ make release       # frontend + static binary
 The two database backends differ in placeholder syntax, type affinity and
 foreign key enforcement, so the suite runs against both rather than whichever
 the environment happened to select.
+
+`make e2e` needs `make release` first — it drives the real binary with the
+frontend embedded. It provisions a throwaway instance and a throwaway SSH
+server per run and tears both down, so it is repeatable rather than dependent
+on what a previous run left behind.
 
 ## Licence
 

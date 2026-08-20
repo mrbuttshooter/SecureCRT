@@ -57,11 +57,20 @@ async function signIn(page: import('@playwright/test').Page) {
     await page.getByRole('button', { name: 'Unlock' }).click()
   }
 
+  // Signing in lands on the terminal workspace, which is where the work is.
+  await expect(page.getByRole('button', { name: 'Terminal' })).toHaveAttribute(
+    'aria-current', 'page')
+}
+
+/** openCredentials switches to the credential tab. */
+async function openCredentials(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: 'Credentials' }).click()
   await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible()
 }
 
 /** generateKey creates a key through the interface and returns its name. */
 async function generateKey(page: import('@playwright/test').Page, name: string) {
+  await openCredentials(page)
   await page.getByRole('button', { name: 'Generate SSH key' }).click()
   await page.getByLabel('Name', { exact: true }).fill(name)
   await page.getByRole('button', { name: 'Generate', exact: true }).click()
@@ -84,6 +93,10 @@ test('signs in, sets up a vault, and generates a key', async ({ page }) => {
   await page.getByLabel('Repeat it', { exact: true }).fill(PASSPHRASE)
   await page.getByRole('button', { name: 'Create vault' }).click()
 
+  // The terminal workspace is the landing screen.
+  await expect(page.getByRole('heading', { name: 'No terminal open' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Credentials' }).click()
   await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible()
   await expect(page.getByText('No credentials yet.')).toBeVisible()
 
@@ -123,7 +136,7 @@ test('a credential survives locking and reopening the vault', async ({ page }) =
 
   await page.getByLabel('Passphrase', { exact: true }).fill(PASSPHRASE)
   await page.getByRole('button', { name: 'Unlock' }).click()
-  await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible()
+  await openCredentials(page)
 
   // Still there, which proves it decrypted under a key derived freshly from
   // the passphrase rather than one left in memory.

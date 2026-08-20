@@ -240,9 +240,22 @@ func TestSecurityHeaders(t *testing.T) {
 					t.Errorf("CSP is missing %q; full value: %s", directive, csp)
 				}
 			}
-			// An inline-script escape hatch would defeat the CSP entirely.
-			if strings.Contains(csp, "unsafe-inline") || strings.Contains(csp, "unsafe-eval") {
-				t.Errorf("CSP must not permit unsafe-inline or unsafe-eval: %s", csp)
+			// script-src must stay strict: an inline-script escape hatch is
+			// what turns a markup injection into code execution, and would
+			// defeat the policy entirely.
+			if strings.Contains(csp, "unsafe-eval") {
+				t.Errorf("CSP must never permit unsafe-eval: %s", csp)
+			}
+			for _, directive := range strings.Split(csp, ";") {
+				directive = strings.TrimSpace(directive)
+				if !strings.Contains(directive, "unsafe-inline") {
+					continue
+				}
+				// style-src carries it deliberately, for the terminal
+				// renderer; see securityHeaders. Anywhere else is a mistake.
+				if !strings.HasPrefix(directive, "style-src ") {
+					t.Errorf("unsafe-inline outside style-src: %q", directive)
+				}
 			}
 		})
 	}

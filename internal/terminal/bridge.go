@@ -49,7 +49,7 @@ func NewBridge(conn *websocket.Conn, term *Terminal, log *slog.Logger) *Bridge {
 // detaching is a normal event, and the shell keeps running so the user can
 // come back to it.
 func (b *Bridge) Run(ctx context.Context) error {
-	replay, output, err := b.term.Attach()
+	att, err := b.term.Attach()
 	if err != nil {
 		b.sendControl(ctx, errorMessage(ErrCodeInternal, "That terminal is no longer available."))
 		return err
@@ -62,9 +62,13 @@ func (b *Bridge) Run(ctx context.Context) error {
 	// Tell the browser which terminal it is on, so it can reattach after a
 	// drop without having to remember what it asked for.
 	cols, rows := b.term.Size()
+	status := StatusConnected
+	if att.Reattached {
+		status = StatusReattached
+	}
 	b.sendControl(ctx, Control{
 		Type:       ControlStatus,
-		Status:     StatusConnected,
+		Status:     status,
 		TerminalID: b.term.ID,
 		Cols:       cols,
 		Rows:       rows,
@@ -72,15 +76,15 @@ func (b *Bridge) Run(ctx context.Context) error {
 
 	// Replay before live output, so the terminal reads in the order it was
 	// printed rather than interleaving history with what is arriving now.
-	if len(replay) > 0 {
-		if err := b.writeBinary(ctx, replay); err != nil {
+	if len(att.Replay) > 0 {
+		if err := b.writeBinary(ctx, att.Replay); err != nil {
 			return err
 		}
 	}
 
 	errs := make(chan error, 2)
 	go func() { errs <- b.readFromBrowser(ctx) }()
-	go func() { errs <- b.writeToBrowser(ctx, output) }()
+	go func() { errs <- b.writeToBrowser(ctx, att.Output) }()
 
 	select {
 	case err := <-errs:

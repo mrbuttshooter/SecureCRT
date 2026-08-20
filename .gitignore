@@ -7,6 +7,9 @@ internal/web/dist/*
 !internal/web/dist/.gitkeep
 *.test
 coverage.out
+# Test fixtures built from ./tools; scripts/e2e.sh puts them in a temp dir,
+# but a bare "go build ./tools/..." drops them here.
+/testsshd
 
 # Local development
 .env

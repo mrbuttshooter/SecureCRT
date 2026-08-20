@@ -1,9 +1,12 @@
-/* Deliberately plain. The real interface arrives with the terminal in the
-   next phase; this exists so the authentication and credential flows can be
-   used and checked by a person rather than only by tests.
+/* Plain by intent everywhere except the workspace.
+
+   The authentication, credential and security screens are forms someone
+   visits occasionally; the terminal workspace is where a working day is
+   spent, so it gets the density and the layout attention and the rest does
+   not.
 
    No inline styles anywhere: the content security policy forbids them, and
-   keeping to it now is easier than retrofitting it after the fact. */
+   keeping to it is easier than retrofitting it after the fact. */
 
 :root {
   --bg: #ffffff;
@@ -126,3 +129,185 @@ ul.plain > li:last-child { border-bottom: none; }
 .qr { background: #fff; padding: 0.75rem; border-radius: var(--radius); display: inline-block; }
 
 hr { border: none; border-top: 1px solid var(--border); margin: 1.25rem 0; }
+
+/* --- terminal workspace ---------------------------------------------------
+
+   The workspace is the one screen people spend all day in, so unlike the rest
+   of this stylesheet it is laid out for density: a fixed-height grid that puts
+   as many rows of terminal on screen as the window allows, rather than a
+   document that scrolls. */
+
+.shell-wide { max-width: none; padding: 1rem 1rem 1rem; }
+.tabpanel[hidden] { display: none; }
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(15rem, 22rem) 1fr;
+  gap: 1rem;
+  /* Fill the window below the header and tab strip rather than growing the
+     page: a terminal that pushes the tab strip off screen is unusable. */
+  height: calc(100vh - 11rem);
+  min-height: 24rem;
+}
+
+@media (max-width: 55rem) {
+  .workspace { grid-template-columns: 1fr; height: auto; }
+}
+
+.sidebar {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.sidebar-head { padding: 0.6rem; border-bottom: 1px solid var(--border); }
+.sidebar-head .filter { margin-bottom: 0.5rem; }
+
+.tree { flex: 1; overflow: auto; padding: 0.35rem 0; min-height: 8rem; }
+.tree.drop-target { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.tree-empty { padding: 0.75rem; }
+.tree-children { list-style: none; margin: 0; padding: 0; }
+
+.tree-row {
+  display: flex; align-items: center; gap: 0.35rem;
+  padding: 0.15rem 0.5rem 0.15rem 0; font-size: 0.9rem;
+  border: 1px solid transparent;
+}
+.tree-row:hover { background: var(--bg); }
+.tree-row.selected { background: var(--bg); border-color: var(--accent); border-radius: 4px; }
+.tree-row.drop-target { border-color: var(--accent); border-style: dashed; border-radius: 4px; }
+
+.tree-label {
+  flex: 1; display: flex; align-items: center; gap: 0.4rem; min-width: 0;
+  background: none; border: none; padding: 0.1rem 0; text-align: left;
+  color: inherit; font: inherit; cursor: pointer;
+}
+.tree-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-host { font-size: 0.8rem; margin-left: auto; padding-left: 0.5rem; }
+.tree-icon { color: var(--muted); font-size: 0.7rem; }
+.tree-session.live .tree-icon { color: var(--ok); }
+
+.tree-twisty {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  padding: 0 0.15rem; font-size: 0.7rem; line-height: 1;
+}
+
+/* Row actions stay out of the way until the row is hovered or focused, so a
+   list of three hundred devices is not a wall of buttons. */
+.tree-tools, .tree-action { display: none; margin-left: auto; gap: 0.4rem; }
+.tree-row:hover .tree-tools,
+.tree-row:focus-within .tree-tools { display: flex; }
+.tree-row:hover .tree-action,
+.tree-row:focus-within .tree-action { display: inline; }
+
+button.link {
+  background: none; border: none; padding: 0; color: var(--accent);
+  cursor: pointer; font: inherit; font-size: 0.82rem;
+}
+button.link.danger { color: var(--danger); }
+
+.orphans, .selection {
+  border-top: 1px solid var(--border); padding: 0.6rem;
+}
+.orphans h3, .selection h3 { font-size: 0.9rem; margin: 0 0 0.3rem; }
+
+.terminals { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.tabstrip {
+  display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; margin-bottom: 0.5rem;
+}
+.tab {
+  display: flex; align-items: center; gap: 0.25rem;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 0.15rem 0.3rem 0.15rem 0.55rem; background: var(--surface);
+  max-width: 16rem;
+}
+.tab.active { border-color: var(--accent); }
+.tab-label {
+  background: none; border: none; padding: 0; color: inherit; font: inherit;
+  font-size: 0.88rem; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tab-close {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  padding: 0 0.2rem; line-height: 1; font-size: 1rem;
+}
+.tabstrip-tools { margin-left: auto; display: flex; gap: 0.4rem; align-items: center; }
+.tabstrip-tools select { width: auto; padding: 0.2rem 0.4rem; font-size: 0.85rem; }
+label.inline { display: flex; align-items: center; gap: 0.3rem; margin: 0; font-size: 0.85rem; }
+label.inline input { width: auto; }
+
+.panes { flex: 1; display: flex; min-height: 0; gap: 0.5rem; }
+.panes.split .pane-slot { flex: 1; }
+.pane-slot { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.pane-slot[hidden] { display: none; }
+
+.pane {
+  position: relative; flex: 1; display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+}
+.pane-status {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.25rem 0.5rem; background: var(--surface);
+  border-bottom: 1px solid var(--border); font-size: 0.82rem;
+}
+.pane-label { color: var(--muted); }
+.pane-tools { margin-left: auto; }
+.pane-screen { flex: 1; min-height: 0; padding: 0.25rem; background: #11151c; }
+.pane-search {
+  display: flex; gap: 0.3rem; padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.pane-search input { font-size: 0.85rem; padding: 0.25rem 0.4rem; }
+.pane-search button { padding: 0.25rem 0.5rem; font-size: 0.85rem; }
+
+.pill {
+  display: inline-block; padding: 0.05rem 0.45rem; border-radius: 999px;
+  font-size: 0.75rem; border: 1px solid var(--border); color: var(--muted);
+}
+.pill-live { color: var(--ok); border-color: var(--ok); }
+.pill-reconnecting, .pill-prompting { color: var(--warn-border); border-color: var(--warn-border); }
+.pill-ended { color: var(--danger); border-color: var(--danger); }
+
+/* The prompt covers its own pane rather than the window: with several tabs
+   open, a modal over everything would block terminals it has nothing to do
+   with. */
+.pane-overlay {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  padding: 1rem; background: rgba(10, 12, 16, 0.82); overflow: auto;
+  /* Above every xterm layer. xterm stacks its canvases and its link layer up
+     to z-index 11; without this the host key dialog draws behind them and its
+     buttons cannot be clicked at all. */
+  z-index: 50;
+}
+.pane-overlay .card { max-width: 34rem; margin: 0; }
+.pane-overlay .card.danger { border-color: var(--danger); }
+
+/* The fingerprint is the largest thing in the dialog on purpose: this is the
+   one value the user is being asked to compare, and burying it in small type
+   is what trains people to accept anything. */
+.fingerprint {
+  font-family: var(--mono); font-size: 1.05rem; word-break: break-all;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0.6rem; margin: 0.75rem 0;
+}
+.fingerprint-inline { font-family: var(--mono); font-size: 0.8rem; }
+
+.empty-terminals { margin: auto; text-align: center; color: var(--muted); }
+
+.editor { max-width: 40rem; }
+.editor .grow { flex: 1; }
+.editor .row > label { margin-bottom: 0.75rem; }
+.editor details { margin-bottom: 0.75rem; }
+.editor summary { cursor: pointer; font-size: 0.9rem; color: var(--muted); }
+
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.75rem; margin: 0.75rem 0; }
+.facts dt { color: var(--muted); font-size: 0.85rem; }
+.facts dd { margin: 0; font-size: 0.85rem; word-break: break-all; }
+
+table.grid { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+table.grid th, table.grid td {
+  text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border);
+}
+table.grid th { color: var(--muted); font-weight: 500; }

@@ -386,8 +386,24 @@ func securityHeaders(next http.Handler) http.Handler {
 		// in the browser to a data URI rather than fetched from the server —
 		// the TOTP secret should not need a second round trip just to become
 		// an image.
+		//
+		// style-src allows 'unsafe-inline' because the terminal needs it.
+		// xterm.js builds its colour scheme and cell metrics into <style>
+		// elements it writes at runtime, and its DOM renderer — the fallback
+		// on machines without a usable GPU, which is exactly where it must
+		// keep working — sets style attributes per cell. It offers no nonce
+		// hook, and the content is generated, so hashes cannot be enumerated.
+		//
+		// What that costs is bounded, and worth stating rather than waving
+		// past. A CSS injection needs somewhere to inject: this app renders
+		// no user-supplied markup, and holds no dangerouslySetInnerHTML. If
+		// one were found, the classic CSS exfiltration trick — a selector
+		// matching a secret paired with an external url() — still cannot
+		// reach anywhere, because default-src, img-src and font-src permit
+		// this origin only. And script-src stays strict, which is the
+		// directive that actually stops an attacker executing code.
 		h.Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self'; "+
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
 				"img-src 'self' data:; font-src 'self'; connect-src 'self'; "+
 				"frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		h.Set("X-Content-Type-Options", "nosniff")

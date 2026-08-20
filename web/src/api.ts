@@ -24,6 +24,7 @@ export type ErrorCode =
   | 'sso_disabled'
   | 'password_auth_disabled'
   | 'key_encrypted'
+  | 'folder_not_empty'
 
 /** ApiError carries the server's machine-readable code alongside its message. */
 export class ApiError extends Error {
@@ -31,12 +32,29 @@ export class ApiError extends Error {
   readonly status: number
   readonly retryAfterSeconds?: number
 
-  constructor(status: number, code: ErrorCode, message: string, retryAfterSeconds?: number) {
+  /**
+   * details is the rest of the server's error object.
+   *
+   * Some errors carry more than prose — a refused folder delete reports how
+   * many folders and connections it would have destroyed, so the interface
+   * can say exactly what is at stake rather than asking a vague "are you
+   * sure?".
+   */
+  readonly details: Record<string, unknown>
+
+  constructor(
+    status: number,
+    code: ErrorCode,
+    message: string,
+    retryAfterSeconds?: number,
+    details: Record<string, unknown> = {},
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.retryAfterSeconds = retryAfterSeconds
+    this.details = details
   }
 }
 
@@ -83,13 +101,16 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
 
   if (!response.ok) {
-    const envelope = parsed as { error?: { code?: ErrorCode; message?: string; retry_after_seconds?: number } }
+    const envelope = parsed as {
+      error?: { code?: ErrorCode; message?: string; retry_after_seconds?: number }
+    }
     const err = envelope?.error
     throw new ApiError(
       response.status,
       err?.code ?? 'internal_error',
       err?.message ?? `Request failed (${response.status}).`,
       err?.retry_after_seconds,
+      (err ?? {}) as Record<string, unknown>,
     )
   }
 
@@ -188,4 +209,94 @@ export interface MFAConfirmation {
   enabled: boolean
   recovery_codes: string[]
   warning: string
+}
+
+// --- saved connections ------------------------------------------------------
+
+/**
+ * Settings are per-connection options.
+ *
+ * Every field is optional in the same sense the server means it: absent is
+ * "inherit from the folder", which is not the same as set to an empty value.
+ * Sending `null` for a field clears it back to inherited.
+ */
+export interface Settings {
+  username?: string | null
+  port?: number | null
+  credential_id?: string | null
+  colour_scheme?: string | null
+  font_size?: number | null
+  scrollback?: number | null
+  keepalive_seconds?: number | null
+  log_session?: boolean | null
+}
+
+export interface Folder {
+  id: string
+  parent_id: string
+  name: string
+  defaults: Settings
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SavedSession {
+  id: string
+  folder_id: string
+  name: string
+  protocol: 'ssh' | 'telnet' | 'serial'
+  hostname: string
+  port: number
+  username: string
+  credential_id: string
+  jump_chain: string[]
+  settings: Settings
+  sort_order: number
+  created_at: string
+  updated_at: string
+  last_used_at?: string
+}
+
+export interface Tree {
+  folders: Folder[]
+  sessions: SavedSession[]
+}
+
+export interface ResolvedSession extends SavedSession {
+  effective: {
+    username: string
+    port: number
+    credential_id: string
+  }
+  /** Which folder each inherited value came from, keyed by field name. */
+  inherited_from: Record<string, string>
+}
+
+export interface LiveTerminal {
+  id: string
+  session_id?: string
+  label: string
+  host: string
+  port: number
+  username?: string
+  created_at: string
+  attached: boolean
+  closed: boolean
+}
+
+export interface KnownHost {
+  id: string
+  hostname: string
+  port: number
+  key_type: string
+  fingerprint: string
+  org_wide: boolean
+  created_at: string
+}
+
+/** FolderNotEmpty is the 409 returned when a delete would destroy contents. */
+export interface FolderNotEmpty {
+  folders: number
+  sessions: number
 }

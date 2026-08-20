@@ -50,8 +50,16 @@ connection between the server and a managed host.
 
 *Defence.* Host key verification is mandatory by default. First contact shows
 the fingerprint for explicit approval; a *changed* key is a hard failure with
-an audit event, never a dismissible warning. Admins can publish an org-wide
-trusted host key list.
+a critical audit event, never a dismissible warning. Admins can publish an
+org-wide trusted host key list.
+
+The check happens inside the SSH handshake, before any credential is offered,
+so declining a fingerprint — or being unable to verify one — sends the host
+nothing. The dialog is built to be answered rather than dismissed: the
+fingerprint is the largest element on screen, accept and refuse are equally
+weighted, and neither is preselected. A dialog that offers an obvious "yes"
+trains people to accept anything, which is the failure this defence exists to
+prevent.
 
 **T5 — Credential exfiltration by a legitimate user.** An employee with a
 valid login copies the team's credentials before leaving.
@@ -62,6 +70,16 @@ critical audit event naming every credential included. Encrypted-bundle export
 remains available and is itself audited. Admins can disable export entirely
 per role. This raises the cost and guarantees a record; it cannot prevent a
 determined user from transcribing what they can already see.
+
+**T5a — A hostile page drives a signed-in user's terminals.** Someone visits
+a malicious site while signed in here.
+
+*Defence.* The terminal WebSocket checks `Origin` on upgrade against the
+configured external URL. This is explicit rather than inherited, because a
+WebSocket is not covered by the same-origin policy the way `fetch` is: the
+browser will open one cross-origin and send the session cookie with it. The
+REST surface is separately covered by `SameSite=Strict` plus a double-submit
+CSRF token.
 
 **T6 — Stolen session token.** An attacker obtains a browser cookie.
 
@@ -227,6 +245,9 @@ test that fails if they regress, rather than only a convention:
 | The audit log cannot be rewritten by the application | A test reads the package source and fails on any `UPDATE`/`DELETE` against `audit_events` |
 | Cookies keep their security attributes | Read back from a real browser and asserted |
 | The content security policy is not quietly relaxed | Browser tests fail on any console error, which is the only way a violation surfaces |
+| `unsafe-inline` never spreads beyond styles | A test parses the policy and fails if any directive other than `style-src` carries it, and on `unsafe-eval` anywhere |
+| A cross-origin page cannot open a terminal | A test performs the upgrade with a foreign `Origin` and asserts it is refused |
+| A declined host key sends no credential | A test declines at the prompt against a real SSH server and asserts the host recorded no authentication attempt |
 | Queries work on PostgreSQL, not just SQLite | An AST-walking test rejects `ExecContext`/`QueryContext` outside `internal/store`, since those bypass placeholder rewriting |
 
 ## Reporting a vulnerability

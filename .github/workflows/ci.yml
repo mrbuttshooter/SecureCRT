@@ -49,7 +49,7 @@ jobs:
 
       - name: Verify formatting
         run: |
-          unformatted=$(gofmt -l ./cmd ./internal)
+          unformatted=$(gofmt -l ./cmd ./internal ./tools)
           if [ -n "$unformatted" ]; then
             echo "These files are not gofmt'd:"
             echo "$unformatted"
@@ -58,6 +58,12 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      # The test fixtures under ./tools are behind a build tag, so the default
+      # build never compiles them. Without this they rot unnoticed until the
+      # browser suite fails for a reason that looks unrelated.
+      - name: Vet test fixtures
+        run: go vet -tags tools ./tools/...
 
       - name: Verify go.mod is tidy
         run: |

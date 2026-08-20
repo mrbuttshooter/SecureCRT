@@ -560,7 +560,7 @@ func TestAbandonedTerminalsAreReaped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = term.Attach()
+	_, err = term.Attach()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -703,13 +703,13 @@ type screen struct {
 func attach(t *testing.T, term *Terminal) *screen {
 	t.Helper()
 
-	replay, output, err := term.Attach()
+	att, err := term.Attach()
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 
-	s := &screen{output: output}
-	s.acc.Write(replay)
+	s := &screen{output: att.Output}
+	s.acc.Write(att.Replay)
 	return s
 }
 
