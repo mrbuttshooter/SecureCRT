@@ -82,11 +82,24 @@ failure, not a warning. Full details and the threat model are in
 ## Trying it
 
 On a fresh Debian or Ubuntu server, one command takes you from nothing to a
-working install over real HTTPS:
+working install over real HTTPS.
+
+While this repository is private you need a GitHub token with read access to
+it — create a fine-grained one at **Settings → Developer settings → Personal
+access tokens**, scoped to this repository with *Contents: read*:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mrbuttshooter/SecureCRT/claude/vigilant-bell-11pf3z/deploy/quickstart.sh | sudo bash
+export GH_TOKEN=github_pat_...
+
+curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw" \
+  "https://api.github.com/repos/mrbuttshooter/SecureCRT/contents/deploy/quickstart.sh?ref=claude/vigilant-bell-11pf3z" \
+  | sudo BKD_GITHUB_TOKEN="$GH_TOKEN" bash
 ```
+
+The API endpoint rather than `raw.githubusercontent.com`: the branch name
+contains a slash, and the raw URL has no way to tell where the branch ends and
+the path begins. Once the repository is public, or on a branch without a slash
+in its name, the plain raw URL works too.
 
 It installs the dependencies, builds, configures Caddy in front for TLS,
 creates an administrator and prints the URL and password. With no domain of

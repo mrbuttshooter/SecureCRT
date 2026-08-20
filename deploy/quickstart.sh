@@ -23,6 +23,12 @@
 #   BKD_EMAIL      the first administrator's address (default: admin@<hostname>)
 #   BKD_REF        git branch or tag to build (default: the current branch,
 #                  or claude/vigilant-bell-11pf3z when run from a pipe)
+#   BKD_GITHUB_TOKEN
+#                  a GitHub token with read access, required while the
+#                  repository is private. Without it the clone below fails
+#                  with a 404 — GitHub reports a private repository as
+#                  missing rather than as forbidden, so that a 404 does not
+#                  itself confirm the repository exists.
 #
 set -euo pipefail
 
@@ -96,13 +102,38 @@ if [[ -f Makefile && -d cmd/bkd ]]; then
     SRC="$PWD"
 else
     info "fetching the source"
+
+    TOKEN="${BKD_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
+    if [[ -n "$TOKEN" ]]; then
+        # Supplied through an askpass helper rather than in the URL. A token
+        # in the clone URL is written into .git/config, where it stays on this
+        # disk for as long as the checkout does, and appears in the process
+        # list while git runs. This way it reaches git over a pipe and lives
+        # in a file that is deleted on the way out.
+        ASKPASS="$(mktemp)"
+        chmod 0700 "$ASKPASS"
+        printf '#!/bin/sh\ncase "$1" in *Username*) echo x-access-token ;; *) printf %%s "%s" ;; esac\n' \
+            "$TOKEN" > "$ASKPASS"
+        # shellcheck disable=SC2064  # $ASKPASS is expanded now, deliberately
+        trap "rm -f '$ASKPASS'" EXIT
+        export GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0
+    fi
+
     if [[ -d "$BUILD_DIR/.git" ]]; then
-        git -C "$BUILD_DIR" fetch --depth 1 origin "$REF"
+        git -C "$BUILD_DIR" fetch --depth 1 origin "$REF" \
+            || die "could not fetch $REF (see the note about BKD_GITHUB_TOKEN above)"
         git -C "$BUILD_DIR" checkout -f FETCH_HEAD
     else
         rm -rf "$BUILD_DIR"
-        git clone --depth 1 --branch "$REF" "$REPO_URL" "$BUILD_DIR"
+        git clone --depth 1 --branch "$REF" "$REPO_URL" "$BUILD_DIR" || die \
+            "could not clone $REPO_URL. If it is private, pass a GitHub token:
+    export BKD_GITHUB_TOKEN=github_pat_...
+  GitHub answers 404 rather than 403 for a repository you cannot see, so a
+  missing token and a wrong branch look identical from here."
     fi
+
+    # The token must not be left behind in the checkout's remote.
+    git -C "$BUILD_DIR" remote set-url origin "$REPO_URL" 2>/dev/null || true
     SRC="$BUILD_DIR"
 fi
 
