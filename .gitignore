@@ -1,0 +1,28 @@
+# Build output
+/bin/
+/dist/
+web/dist/
+*.test
+coverage.out
+
+# Local development
+.env
+*.local.yaml
+/tmp/
+
+# Secrets — never commit
+*.key
+master.key
+*.pem
+!testdata/**/*.pem
+*.bkbundle
+
+# Node
+node_modules/
+.pnpm-store/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
