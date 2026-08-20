@@ -3,61 +3,33 @@ package auth
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/mrbuttshooter/securecrt/internal/store"
+	"github.com/mrbuttshooter/securecrt/internal/store/storetest"
 )
 
-func quietLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
+func quietLogger() *slog.Logger { return storetest.QuietLogger() }
 
-// testDB returns a freshly migrated database.
+// testDB returns a freshly migrated, isolated database.
 //
 // The backend is chosen by BKD_TEST_POSTGRES_DSN: unset gives SQLite, set
 // gives PostgreSQL. `make test` runs the suite both ways rather than picking
 // one, because the two drivers differ in exactly the places that bite —
 // placeholder syntax, type affinity and foreign key enforcement.
-func testDB(t *testing.T) *store.DB {
-	t.Helper()
-	ctx := context.Background()
+func testDB(t *testing.T) *store.DB { return storetest.New(t) }
 
-	var db *store.DB
-	var err error
-
-	if dsn := os.Getenv("BKD_TEST_POSTGRES_DSN"); dsn != "" {
-		db, err = store.Open(ctx, store.Options{Driver: store.DriverPostgres, DSN: dsn})
-		if err != nil {
-			t.Fatalf("open postgres: %v", err)
-		}
-		// Postgres instances are reused across tests, unlike the per-test
-		// SQLite temp file, so each test starts from a clean schema.
-		if _, err := db.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public;`); err != nil {
-			t.Fatalf("reset schema: %v", err)
-		}
-	} else {
-		db, err = store.Open(ctx, store.Options{
-			Driver: store.DriverSQLite,
-			DSN:    filepath.Join(t.TempDir(), "test.db"),
-		})
-		if err != nil {
-			t.Fatalf("open sqlite: %v", err)
-		}
-	}
-
-	if err := store.Migrate(ctx, db, quietLogger()); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return db
+// TestMain drops this process's PostgreSQL schema when the run finishes.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	storetest.DropSchema()
+	os.Exit(code)
 }
 
 // testUser inserts a user and returns its ID.
