@@ -26,13 +26,14 @@ BASE_URL="http://127.0.0.1:${PORT}"
 WORKDIR="$(mktemp -d)"
 SERVER_PID=""
 SSHD_PID=""
+SSHD2_PID=""
 
 SSH_USER="tester"
 SSH_PASSWORD="a throwaway ssh password"
 
 # shellcheck disable=SC2317  # called by the EXIT trap, which shellcheck cannot see
 cleanup() {
-    for pid in "$SERVER_PID" "$SSHD_PID"; do
+    for pid in "$SERVER_PID" "$SSHD_PID" "$SSHD2_PID"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -85,41 +86,67 @@ EOF
 ./bin/bkd gen-master-key --config "$WORKDIR/config.yaml" >/dev/null
 ./bin/bkd migrate --config "$WORKDIR/config.yaml" >/dev/null 2>&1
 
-echo "a very long admin password" | \
-    ./bin/bkd admin create-user --config "$WORKDIR/config.yaml" \
-        -email admin@example.com -name "Alice Admin" -admin >/dev/null
+# One account per spec file. The suites share an instance, so sharing an
+# account would mean sharing a vault, a credential list, a set of saved
+# connections and a known-hosts list — and a test asserting on the first-run
+# experience or on an empty list would then depend on which file happened to
+# run first. An earlier version did, and broke the moment a third spec was
+# added.
+for account in admin terminal files; do
+    echo "a very long admin password" | \
+        ./bin/bkd admin create-user --config "$WORKDIR/config.yaml" \
+            -email "${account}@example.com" -name "Test ${account}" -admin >/dev/null
+done
 
-# A real SSH server with a real pty. The Go tests use an in-process one with a
-# canned handler, which proves the protocol; this proves a genuine shell
-# behaves — that resize reaches stty, that a login is a login.
+# Real SSH servers with a real pty and a real SFTP subsystem. The Go tests use
+# in-process ones with canned handlers, which proves the protocol; these prove
+# a genuine shell behaves — that resize reaches stty, that a login is a login —
+# and that a file uploaded through the browser lands on a real filesystem this
+# script can then read.
+#
+# Two of them, because copying a directory from one managed host straight to
+# another is the feature that needs two hosts to test at all.
 info "building the test SSH server"
 go build -tags tools -o "$WORKDIR/testsshd" ./tools/testsshd
 
-info "starting the test SSH server"
-"$WORKDIR/testsshd" \
-    -addr 127.0.0.1:0 \
-    -user "$SSH_USER" \
-    -password "$SSH_PASSWORD" \
-    -port-file "$WORKDIR/sshd.port" > "$WORKDIR/sshd.log" 2>&1 &
-SSHD_PID=$!
+start_sshd() {
+    local name="$1"
+    local logfile="$WORKDIR/${name}.log"
+    local portfile="$WORKDIR/${name}.port"
 
-for _ in $(seq 1 80); do
-    [[ -s "$WORKDIR/sshd.port" ]] && break
-    if ! kill -0 "$SSHD_PID" 2>/dev/null; then
-        echo "the test SSH server exited during startup:" >&2
-        cat "$WORKDIR/sshd.log" >&2
+    "$WORKDIR/testsshd" \
+        -addr 127.0.0.1:0 \
+        -user "$SSH_USER" \
+        -password "$SSH_PASSWORD" \
+        -port-file "$portfile" > "$logfile" 2>&1 &
+    local pid=$!
+
+    local _
+    for _ in $(seq 1 80); do
+        [[ -s "$portfile" ]] && break
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "the test SSH server ${name} exited during startup:" >&2
+            cat "$logfile" >&2
+            exit 1
+        fi
+        sleep 0.25
+    done
+
+    if [[ ! -s "$portfile" ]]; then
+        echo "the test SSH server ${name} never reported a port:" >&2
+        cat "$logfile" >&2
         exit 1
     fi
-    sleep 0.25
-done
 
-if [[ ! -s "$WORKDIR/sshd.port" ]]; then
-    echo "the test SSH server never reported a port:" >&2
-    cat "$WORKDIR/sshd.log" >&2
-    exit 1
-fi
+    echo "$pid"
+}
+
+info "starting the test SSH servers"
+SSHD_PID="$(start_sshd sshd)"
+SSHD2_PID="$(start_sshd sshd2)"
 SSH_PORT="$(cat "$WORKDIR/sshd.port")"
-info "test SSH server on 127.0.0.1:${SSH_PORT}"
+SSH_PORT_2="$(cat "$WORKDIR/sshd2.port")"
+info "test SSH servers on 127.0.0.1:${SSH_PORT} and 127.0.0.1:${SSH_PORT_2}"
 
 info "starting bkd on ${BASE_URL}"
 ./bin/bkd serve --config "$WORKDIR/config.yaml" > "$WORKDIR/server.log" 2>&1 &
@@ -147,6 +174,7 @@ set +e
     BKD_E2E_URL="$BASE_URL" \
     BKD_E2E_SSH_HOST="127.0.0.1" \
     BKD_E2E_SSH_PORT="$SSH_PORT" \
+    BKD_E2E_SSH_PORT_2="$SSH_PORT_2" \
     BKD_E2E_SSH_USER="$SSH_USER" \
     BKD_E2E_SSH_PASSWORD="$SSH_PASSWORD" \
     npx playwright test "$@")
@@ -157,8 +185,8 @@ if [[ $STATUS -ne 0 ]]; then
     echo
     echo "--- server log ---" >&2
     cat "$WORKDIR/server.log" >&2
-    echo "--- test ssh server log ---" >&2
-    cat "$WORKDIR/sshd.log" >&2
+    echo "--- test ssh server logs ---" >&2
+    cat "$WORKDIR/sshd.log" "$WORKDIR/sshd2.log" >&2
 fi
 
 exit $STATUS

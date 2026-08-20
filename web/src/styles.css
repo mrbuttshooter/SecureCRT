@@ -311,3 +311,128 @@ table.grid th, table.grid td {
   text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border);
 }
 table.grid th { color: var(--muted); font-weight: 500; }
+
+/* --- file browser ----------------------------------------------------------
+
+   Two remote panes side by side. Laid out like the workspace rather than the
+   forms: fixed height, each pane scrolling its own listing, because a
+   directory of two thousand files should not make the page scroll. */
+
+.files { display: flex; flex-direction: column; gap: 0.6rem; }
+.files-hint { margin: 0; }
+
+.file-panes {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;
+  height: calc(100vh - 20rem); min-height: 20rem;
+}
+
+@media (max-width: 60rem) {
+  .file-panes { grid-template-columns: 1fr; height: auto; }
+}
+
+.file-pane {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface);
+}
+/* The drop target is the whole pane, so a file dragged from the desktop does
+   not have to be aimed at a particular row. */
+.file-pane.drop-active { outline: 2px dashed var(--accent); outline-offset: -3px; }
+
+.file-head {
+  padding: 0.5rem; border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 0.4rem;
+}
+.file-head select, .file-head input { padding: 0.3rem 0.45rem; font-size: 0.88rem; }
+.file-head button { padding: 0.3rem 0.55rem; font-size: 0.85rem; }
+.path-bar { margin: 0; }
+.path-bar input { font-family: var(--mono); font-size: 0.82rem; }
+.hidden-input { display: none; }
+
+.file-list { flex: 1; overflow: auto; min-height: 0; }
+.file-empty { padding: 1rem; }
+
+.file-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(4rem, 1fr) 4.5rem 5.5rem 5rem 7.5rem;
+  gap: 0.4rem; align-items: center;
+  padding: 0.15rem 0.5rem; font-size: 0.85rem;
+  border-bottom: 1px solid transparent;
+}
+.file-row:hover { background: var(--bg); }
+.file-row.selected { background: var(--bg); box-shadow: inset 2px 0 0 var(--accent); }
+
+.file-header {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  color: var(--muted); font-size: 0.78rem; text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* The button is a flex container, so the ellipsis has to live on a child:
+   white-space and text-overflow do nothing on a flex box, and without this
+   the name overflows its grid cell and the columns beside it end up painted
+   over the thing the user is trying to click. */
+.file-name {
+  display: flex; align-items: center; gap: 0.35rem;
+  min-width: 0; overflow: hidden;
+  background: none; border: none; padding: 0; text-align: left;
+  color: inherit; font: inherit; cursor: pointer;
+}
+.file-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-icon { color: var(--muted); }
+.file-size, .file-mode, .file-owner, .file-time {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted);
+}
+.file-size { text-align: right; }
+.file-mode { font-size: 0.78rem; }
+
+/* Row actions appear over the right-hand end of the row on hover, so a
+   listing of two thousand files is a listing rather than a wall of buttons.
+
+   Overlaid rather than given a column of their own, for two reasons. A column
+   wide enough for five buttons would leave nothing for the filename in a
+   half-width pane — the name column collapsed to zero and became unclickable
+   when it was tried. And appearing in the flow would reflow the row on hover,
+   so whatever the user was aiming at would move as they reached for it. */
+.file-actions {
+  position: absolute; right: 0.5rem; top: 0; bottom: 0;
+  display: none; gap: 0.5rem; align-items: center;
+  padding-left: 1.5rem;
+  background: linear-gradient(to right, transparent, var(--bg) 1.5rem);
+}
+.file-row:hover .file-actions,
+.file-row:focus-within .file-actions { display: flex; }
+.file-header .file-actions { display: none; }
+
+.transfers {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 0.6rem; background: var(--surface);
+  max-height: 12rem; overflow: auto;
+}
+.transfers h3 { font-size: 0.9rem; margin: 0 0 0.4rem; }
+
+.transfer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 10rem minmax(0, 12rem) auto;
+  gap: 0.5rem; align-items: center; padding: 0.3rem 0; font-size: 0.85rem;
+}
+.transfer-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.transfer-state { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.transfer progress { width: 100%; height: 0.5rem; }
+.danger { color: var(--danger); }
+
+.editor-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center; padding: 1.5rem;
+  background: rgba(10, 12, 16, 0.82);
+}
+.editor-card {
+  width: min(64rem, 100%); max-height: 90vh; margin: 0;
+  display: flex; flex-direction: column;
+}
+.editor-text {
+  flex: 1; min-height: 24rem; font-family: var(--mono); font-size: 0.85rem;
+  line-height: 1.45; white-space: pre; overflow: auto;
+}

@@ -25,6 +25,9 @@ export type ErrorCode =
   | 'password_auth_disabled'
   | 'key_encrypted'
   | 'folder_not_empty'
+  | 'host_key_prompt'
+  | 'host_key_changed'
+  | 'host_key_rejected'
 
 /** ApiError carries the server's machine-readable code alongside its message. */
 export class ApiError extends Error {
@@ -299,4 +302,178 @@ export interface KnownHost {
 export interface FolderNotEmpty {
   folders: number
   sessions: number
+}
+
+// --- files ------------------------------------------------------------------
+
+export interface FileEntry {
+  name: string
+  path: string
+  size: number
+  mod_time: string
+  /** Permission bits in octal, as chmod takes them: "0644". */
+  mode: string
+  /** The ls-style rendering: "drwxr-xr-x". */
+  mode_string: string
+  is_dir: boolean
+  is_symlink: boolean
+  link_target?: string
+  /** Whether a symlink resolves to a directory, so it can be opened. */
+  target_is_dir?: boolean
+  uid: number
+  gid: number
+  owner?: string
+  group?: string
+}
+
+export interface Listing {
+  path: string
+  parent: string
+  entries: FileEntry[]
+}
+
+export interface FileSession {
+  session_id: string
+  label: string
+  host: string
+  port: number
+  username?: string
+  home: string
+  /** Whether the host published /etc/passwd, so chown can take names. */
+  owner_names?: boolean
+}
+
+export type TransferState = 'running' | 'done' | 'failed' | 'cancelled'
+
+export interface Transfer {
+  id: string
+  kind: 'copy' | 'delete'
+  state: TransferState
+  source_session: string
+  source_path: string
+  dest_session?: string
+  dest_path?: string
+  name: string
+  total_bytes: number
+  done_bytes: number
+  total_files: number
+  done_files: number
+  current?: string
+  error?: string
+  started_at: string
+  finished_at?: string
+}
+
+/** HostKeyPrompt is the 409 an unrecognised host produces on first contact. */
+export interface HostKeyPrompt {
+  hostname: string
+  port: number
+  key_type: string
+  fingerprint: string
+  previous_fingerprint?: string
+  previously_seen?: string
+  org_wide?: boolean
+}
+
+/**
+ * openFileSession starts browsing a host.
+ *
+ * The host key question is answered in two steps, because a plain HTTP
+ * request cannot be interrupted mid-handshake the way the terminal's socket
+ * can: the first attempt reports the fingerprint, and `acceptFingerprint`
+ * carries the user's answer on a second attempt. The server checks that the
+ * accepted fingerprint matches what the host then presents, so answering
+ * about one key cannot accept another.
+ */
+export async function openFileSession(
+  sessionId: string,
+  acceptFingerprint?: string,
+): Promise<FileSession> {
+  const query = new URLSearchParams({ session: sessionId })
+  if (acceptFingerprint) query.set('accept_host_key', acceptFingerprint)
+  return api.post<FileSession>(`/api/files/sessions?${query}`)
+}
+
+/** downloadURL is a link the browser's own download manager can follow. */
+export function downloadURL(sessionId: string, filePath: string): string {
+  const query = new URLSearchParams({ session: sessionId, path: filePath })
+  return `/api/files/content?${query}`
+}
+
+export interface UploadProgress {
+  loaded: number
+  total: number
+}
+
+/**
+ * uploadFile sends one file to a host, reporting progress as it goes.
+ *
+ * XMLHttpRequest rather than fetch: fetch still cannot report upload
+ * progress in any browser, and a large upload with no progress bar is
+ * indistinguishable from one that has hung.
+ */
+export function uploadFile(
+  sessionId: string,
+  target: string,
+  file: Blob,
+  options: {
+    offset?: number
+    onProgress?: (p: UploadProgress) => void
+    signal?: AbortSignal
+  } = {},
+): Promise<{ path: string; bytes: number; size: number }> {
+  const offset = options.offset ?? 0
+  const query = new URLSearchParams({
+    session: sessionId,
+    path: target,
+    offset: String(offset),
+  })
+
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('PUT', `/api/files/content?${query}`)
+    request.withCredentials = true
+
+    const token = readCookie(CSRF_COOKIE)
+    if (token) request.setRequestHeader(CSRF_HEADER, token)
+
+    request.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) {
+        options.onProgress?.({ loaded: event.loaded, total: event.total })
+      }
+    })
+
+    request.addEventListener('load', () => {
+      if (request.status >= 200 && request.status < 300) {
+        try {
+          resolve(JSON.parse(request.responseText))
+        } catch {
+          resolve({ path: target, bytes: file.size, size: offset + file.size })
+        }
+        return
+      }
+
+      let message = `The upload failed (${request.status}).`
+      let code: ErrorCode = 'internal_error'
+      try {
+        const parsed = JSON.parse(request.responseText) as {
+          error?: { code?: ErrorCode; message?: string }
+        }
+        if (parsed.error?.message) message = parsed.error.message
+        if (parsed.error?.code) code = parsed.error.code
+      } catch {
+        // A non-JSON body means something upstream intervened.
+      }
+      reject(new ApiError(request.status, code, message))
+    })
+
+    request.addEventListener('error', () =>
+      reject(new ApiError(0, 'internal_error', 'The upload could not reach the server.')))
+    request.addEventListener('abort', () =>
+      reject(new ApiError(0, 'bad_request', 'The upload was cancelled.')))
+
+    options.signal?.addEventListener('abort', () => request.abort())
+
+    request.send(file)
+  })
 }

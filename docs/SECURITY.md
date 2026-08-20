@@ -81,6 +81,18 @@ browser will open one cross-origin and send the session cookie with it. The
 REST surface is separately covered by `SameSite=Strict` plus a double-submit
 CSRF token.
 
+**T5b — A file taken from a managed host is used to attack this service.**
+Someone downloads a crafted HTML or SVG file through the file browser.
+
+*Defence.* Downloads are always `Content-Disposition: attachment` with
+`Content-Type: application/octet-stream` and `X-Content-Type-Options: nosniff`,
+so a file fetched from a host is never rendered in this origin — where it
+would execute with the user's session. Remote filenames are not under this
+service's control either, so the header's filename parameter is sanitised to
+safe ASCII and the exact name travels separately in the RFC 5987 form: a name
+containing a quote, a semicolon or a CRLF would otherwise break the header or
+inject another.
+
 **T6 — Stolen session token.** An attacker obtains a browser cookie.
 
 *Defence.* Tokens are `HttpOnly`, `Secure`, `SameSite=Strict`, short-lived,
@@ -111,6 +123,16 @@ their session and keylog their passphrase. Out of scope for a server.
 **T10 — Credential misuse by an authorised user.** Someone entitled to a
 credential can use it. Audit logging and session recording detect this; they
 do not prevent it.
+
+## Files on the server
+
+Nothing a user transfers is written to this server's disk. Downloads,
+uploads and host-to-host copies all stream through the process without
+landing, so there is no spool directory to protect, no retention question to
+answer and nothing left behind for a later reader to find. The only files bkd
+writes are its own: the database, the master key, and — when an operator
+enables them — session transcripts and recordings, all of which live under
+`paths.data_dir` at 0700.
 
 ## Cryptography
 
@@ -248,6 +270,10 @@ test that fails if they regress, rather than only a convention:
 | `unsafe-inline` never spreads beyond styles | A test parses the policy and fails if any directive other than `style-src` carries it, and on `unsafe-eval` anywhere |
 | A cross-origin page cannot open a terminal | A test performs the upgrade with a foreign `Origin` and asserts it is refused |
 | A declined host key sends no credential | A test declines at the prompt against a real SSH server and asserts the host recorded no authentication attempt |
+| Accepting one host key cannot approve a different one | The file browser's two-step approval carries the fingerprint the user saw; a test confirms with the wrong one and asserts it is refused |
+| A downloaded file cannot render in this origin | A test asserts the attachment disposition, the octet-stream type and nosniff on a file whose contents are a script |
+| A remote filename cannot forge a response header | A test passes names containing quotes, semicolons and CRLF and asserts the header stays intact |
+| One user's file session is unreachable by another | A test opens a session, signs in as a second account, and asserts that listing it, downloading through it and enumerating it are all refused |
 | Queries work on PostgreSQL, not just SQLite | An AST-walking test rejects `ExecContext`/`QueryContext` outside `internal/store`, since those bypass placeholder rewriting |
 
 ## Reporting a vulnerability

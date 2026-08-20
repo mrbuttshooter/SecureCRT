@@ -10,7 +10,10 @@ import { test, expect, type Page } from '@playwright/test'
 // all work together in the browser people will actually use.
 
 const BASE = process.env.BKD_E2E_URL ?? 'http://127.0.0.1:18500'
-const EMAIL = 'admin@example.com'
+// Its own account: the suites share an instance, and sharing an account
+// would mean sharing a vault, a credential list and a known-hosts list with
+// whichever spec file happened to run first.
+const EMAIL = 'terminal@example.com'
 const PASSWORD = 'a very long admin password'
 const PASSPHRASE = 'a sufficiently long vault passphrase'
 

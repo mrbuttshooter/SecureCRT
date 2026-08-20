@@ -153,6 +153,43 @@ The upgrade checks `Origin` explicitly. A WebSocket is not covered by the
 same-origin policy, so without that check any page on the internet could open
 a terminal using a signed-in visitor's cookies.
 
+## Files
+
+A file session is SFTP layered on an existing SSH connection rather than a
+connection of its own. SSH multiplexes channels, so browsing a switch you
+already have a terminal on costs one more channel — not one more TCP
+connection, one more authentication, and one more vty line against a limit
+that on plenty of equipment is four.
+
+Connections are shared by reference count in `internal/remote`. They live
+while anything holds a lease and close when the last one is released, so
+closing a file browser never disconnects a terminal and closing a terminal
+never interrupts a transfer.
+
+**Nothing is spooled to this server's disk.** A download streams from the
+host through the process to the browser, an upload streams the other way, and
+a host-to-host copy streams through without ever landing. A server that never
+writes a user's files anywhere is one whose disk cannot leak them, and it
+removes every question about retention, encryption at rest and cleanup.
+
+What is a request and what is a job:
+
+| Work | Shape | Why |
+|---|---|---|
+| Upload, download | One streaming HTTP request | The browser already reports progress, resumes and saves; a server-side queue would relay all three worse |
+| Host-to-host copy, recursive delete | A cancellable server-side job | No browser in the middle, and both run past any sensible request timeout on a slow link |
+
+A host key nobody has accepted cannot be answered mid-handshake over a plain
+HTTP request the way it can over the terminal's WebSocket. So the first
+attempt refuses and reports the fingerprint, and the answer returns as
+`accept_host_key` on a second attempt — which must match the key the host then
+presents, so a host that swaps keys between the two is refused rather than
+approved by an answer about a different one.
+
+Downloads are always `Content-Disposition: attachment`. A file fetched from a
+managed host must never render in this origin, where an HTML or SVG payload
+would execute as though this application had served it.
+
 ## Layout
 
 | Path | Responsibility |
@@ -167,8 +204,11 @@ a terminal using a signed-in visitor's cookies.
 | `internal/credentials` | credential CRUD, SSH key generation and import |
 | `internal/sessions` | saved connections, folders, inherited defaults |
 | `internal/hostkeys` | host key trust decisions, personal and org-wide |
+| `internal/remote` | shared, reference-counted SSH connections and the dial path |
+| `internal/files` | SFTP sessions and the server-side transfer queue |
 | `internal/terminal` | live SSH sessions, the WebSocket bridge, survival |
-| `internal/proto/*` | SSH, SFTP, Telnet, serial, tunnels *(phases 2–6)* |
+| `internal/proto/sshx`, `internal/proto/sftpx` | SSH and SFTP |
+| `internal/proto/*` | Telnet, serial, tunnels *(phases 5–6)* |
 | `internal/portability` | import and export adapters *(phase 4)* |
 | `internal/api` | REST and WebSocket surface |
 | `internal/audit` | append-only event writer |

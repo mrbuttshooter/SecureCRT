@@ -8,8 +8,9 @@ import { Sessions } from './views/Sessions'
 import { Security } from './views/Security'
 import { Workspace } from './views/Workspace'
 import { KnownHosts } from './views/KnownHosts'
+import { Files } from './views/Files'
 
-type Tab = 'terminal' | 'credentials' | 'hosts' | 'sessions' | 'security'
+type Tab = 'terminal' | 'files' | 'credentials' | 'hosts' | 'sessions' | 'security'
 
 /**
  * App decides what to show from a single whoami response.
@@ -94,7 +95,7 @@ export function App() {
   }
 
   return (
-    <main className={'shell' + (tab === 'terminal' ? ' shell-wide' : '')}>
+    <main className={'shell' + (tab === 'terminal' || tab === 'files' ? ' shell-wide' : '')}>
       <header className="bar">
         <div>
           <h1>Bridgekeeper</h1>
@@ -115,6 +116,8 @@ export function App() {
       <nav className="tabs">
         <button aria-current={tab === 'terminal' ? 'page' : undefined}
                 onClick={() => setTab('terminal')}>Terminal</button>
+        <button aria-current={tab === 'files' ? 'page' : undefined}
+                onClick={() => setTab('files')}>Files</button>
         <button aria-current={tab === 'credentials' ? 'page' : undefined}
                 onClick={() => setTab('credentials')}>Credentials</button>
         <button aria-current={tab === 'hosts' ? 'page' : undefined}
@@ -134,6 +137,7 @@ export function App() {
       <div hidden={tab !== 'terminal'} className="tabpanel">
         <Workspace />
       </div>
+      {tab === 'files' && <Files />}
       {tab === 'credentials' && <Credentials />}
       {tab === 'hosts' && <KnownHosts />}
       {tab === 'sessions' && <Sessions />}

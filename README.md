@@ -15,8 +15,8 @@ saved passwords from any machine, with nothing installed locally.
 
 ## Status
 
-Usable for its core purpose: sign in, store credentials, and open SSH
-sessions in a browser. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase
+Usable for its core purpose: sign in, store credentials, open SSH sessions
+in a browser, and move files to and from the hosts you reach. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase
 plan and for what each completed phase actually contains.
 
 | Phase | Scope | State |
@@ -24,8 +24,8 @@ plan and for what each completed phase actually contains.
 | 0 | Foundations: config, storage, build, deploy | **complete** |
 | 1 | Identity, SSO, MFA & credential vault | **complete** |
 | 2 | SSH terminal | **complete** |
-| 3 | SFTP file transfer | next |
-| 4 | Import / export (SecureCRT, PuTTY, OpenSSH) | not started |
+| 3 | SFTP file transfer | **complete** |
+| 4 | Import / export (SecureCRT, PuTTY, OpenSSH) | next |
 | 5 | Tunnels & jump hosts | not started |
 | 6 | Telnet, serial & console servers | not started |
 | 7 | Power-user features (broadcast, snippets, triggers) | not started |

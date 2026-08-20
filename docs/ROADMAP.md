@@ -59,11 +59,32 @@ about rather than quietly dropping:
   the interface offers it, but only SSH is wired to a transport. Telnet and
   serial arrive with Phase 5.
 
-## Phase 3 — SFTP
+## Phase 3 — SFTP ✅
 
-Dual-pane browser, drag-and-drop transfer, recursive directories, resumable
-transfers, queue and progress UI, in-browser file editor, chmod/chown,
-transfers over the same SSH connection as the terminal tab.
+- [x] SFTP over the terminal tab's own SSH connection, reference-counted
+- [x] Dual-pane browser with per-pane filter, path bar and navigation
+- [x] Drag files in from the desktop to upload; drag between panes to copy
+      one managed host straight to another
+- [x] Recursive directory copy and delete, as cancellable server-side jobs
+- [x] Byte-accurate progress for both, plus browser-side upload progress
+- [x] Resumable uploads and downloads, by offset and by HTTP Range
+- [x] In-browser editor, refusing binaries and anything over 2 MiB
+- [x] chmod, chown by name or numeric id, rename, mkdir, delete
+- [x] Owner and group names read from the host's own /etc/passwd
+- [x] Browser end-to-end suite against two real SFTP hosts
+
+Named in the original scope and deliberately not built:
+
+- **A local-filesystem pane.** A browser cannot list your disk, so the
+  traditional local side of an SFTP client is impossible. Both panes are
+  remote instead, and the local side is served by dragging files in and by
+  ordinary downloads — which buys something SecureCRT cannot do at all:
+  copying a directory from one managed host straight to another without it
+  passing through anybody's laptop.
+- **A server-side queue for uploads and downloads.** Each is one streaming
+  HTTP request, and the browser reports progress, resumes and saves far
+  better than a queue relaying it second-hand. The server-side queue exists
+  for the work with no browser in the middle.
 
 ## Phase 4 — Import and export
 

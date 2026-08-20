@@ -1,11 +1,13 @@
-// Command testsshd runs a throwaway SSH server with a real pty, for the
-// browser end-to-end suite.
+// Command testsshd runs a throwaway SSH server with a real pty and a real
+// SFTP subsystem, for the browser end-to-end suite.
 //
 // The Go tests drive an in-process SSH server with a canned handler, which is
 // enough to prove the protocol. This exists for the other half: proving that
 // a real shell, on a real pty, behaves correctly when driven through a
 // browser — that resize reaches `stty size`, that a full-screen program
-// redraws, that UTF-8 and colour survive the round trip.
+// redraws, that UTF-8 and colour survive the round trip — and that files
+// written through the browser land on a real filesystem the test can inspect
+// afterwards.
 //
 // It is a test fixture, not part of the product. It is built by
 // scripts/e2e.sh and never shipped.
@@ -29,6 +31,7 @@ import (
 
 	"github.com/creack/pty"
 	gssh "github.com/gliderlabs/ssh"
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -59,6 +62,9 @@ func main() {
 			return ctx.User() == *user && given == *password
 		},
 		Handler: func(s gssh.Session) { runShell(s, *shell) },
+		SubsystemHandlers: map[string]gssh.SubsystemHandler{
+			"sftp": serveSFTP,
+		},
 	}
 
 	listener, err := net.Listen("tcp", *addr)
@@ -76,6 +82,24 @@ func main() {
 
 	if err := srv.Serve(listener); err != nil && err != gssh.ErrServerClosed {
 		log.Fatalf("testsshd: %v", err)
+	}
+}
+
+// serveSFTP runs a real SFTP server over one channel.
+//
+// It serves the actual filesystem, so a file uploaded through the browser is
+// a file the test can then read with os.ReadFile — which is the difference
+// between proving a transfer happened and proving a request was accepted.
+func serveSFTP(s gssh.Session) {
+	server, err := sftp.NewServer(s)
+	if err != nil {
+		log.Printf("testsshd: sftp: %v", err)
+		return
+	}
+	defer func() { _ = server.Close() }()
+
+	if err := server.Serve(); err != nil && err != io.EOF {
+		log.Printf("testsshd: sftp: %v", err)
 	}
 }
 
