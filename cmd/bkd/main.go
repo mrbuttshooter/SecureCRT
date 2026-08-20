@@ -29,6 +29,8 @@ Commands:
   migrate           Apply pending database migrations and exit
   rollback          Revert the most recent migration and exit
   gen-master-key    Create the server master key file (run once, at install)
+  admin             Manage accounts (create-user, list-users, reset-vault, ...)
+  test-sso          Check the single sign-on configuration against the provider
   version           Print the build version
 
 Run "bkd <command> -h" for the flags of a specific command.
@@ -58,6 +60,10 @@ func run(args []string) error {
 		return cmdRollback(rest)
 	case "gen-master-key":
 		return cmdGenMasterKey(rest)
+	case "admin":
+		return cmdAdmin(rest)
+	case "test-sso":
+		return cmdTestSSO(rest)
 	case "version":
 		fmt.Println(config.Version)
 		return nil
@@ -156,6 +162,27 @@ func cmdRollback(args []string) error {
 	defer stop()
 
 	return server.RollbackOnly(ctx, cfg, log)
+}
+
+// cmdTestSSO validates the single sign-on configuration against the live
+// identity provider, so the first real sign-in attempt gives a specific error
+// rather than a blank page.
+func cmdTestSSO(args []string) error {
+	fs := flag.NewFlagSet("test-sso", flag.ExitOnError)
+	cfgPath := configFlag(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := loadConfig(*cfgPath)
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signalContext()
+	defer stop()
+
+	return server.TestOIDC(ctx, cfg)
 }
 
 func cmdGenMasterKey(args []string) error {
