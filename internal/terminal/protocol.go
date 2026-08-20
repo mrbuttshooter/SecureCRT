@@ -62,6 +62,12 @@ const (
 	// ControlError reports a failure in terms the user can act on.
 	ControlError ControlType = "error"
 
+	// ControlWarning reports something the user should know that did not
+	// stop the terminal from opening — a host declining a forwarded agent,
+	// for instance. Distinct from ControlError, which means the terminal is
+	// not there.
+	ControlWarning ControlType = "warning"
+
 	// ControlClosed reports that the remote session ended.
 	ControlClosed ControlType = "closed"
 

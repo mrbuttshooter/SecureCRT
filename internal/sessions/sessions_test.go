@@ -645,3 +645,54 @@ func TestSessionsSurviveTheirFolderBeingEmptied(t *testing.T) {
 		t.Errorf("port = %d, want the protocol default", resolved.EffectivePort)
 	}
 }
+
+// TestAgentForwardingIsNeverInheritedFromAFolder pins the one omission in
+// merge that is load-bearing.
+//
+// Every other setting is a convenience and inherits happily. This one is an
+// authority: it lets the host use the user's keys to authenticate anywhere
+// those keys are accepted, for as long as the connection lives. Inherited
+// from a folder it would grant that to every host inside — including hosts
+// somebody else adds next month — and the person who set the default would be
+// the last to know.
+//
+// Adding the field to merge is a one-line change that looks like tidying up
+// after an oversight. This is the test that says it is not one.
+func TestAgentForwardingIsNeverInheritedFromAFolder(t *testing.T) {
+	keys := []string{"cred-1", "cred-2"}
+	parent := Settings{AgentForwardCredentials: &keys}
+
+	child := Settings{}
+	merged := child.merge(parent)
+
+	if merged.ForwardsAgent() {
+		t.Fatalf("a folder default forwarded an agent to a connection that never "+
+			"asked for one: %v", merged.AgentCredentials())
+	}
+
+	// And the rest of inheritance still works, so this is an exclusion rather
+	// than merge being broken.
+	username := "alice"
+	merged = Settings{}.merge(Settings{Username: &username, AgentForwardCredentials: &keys})
+	if merged.Username == nil || *merged.Username != "alice" {
+		t.Error("ordinary settings must still be inherited")
+	}
+	if merged.ForwardsAgent() {
+		t.Error("the agent setting came through alongside one that should")
+	}
+}
+
+// TestAConnectionsOwnAgentSettingSurvivesInheritance: excluded from merge
+// must not mean discarded.
+func TestAConnectionsOwnAgentSettingSurvivesInheritance(t *testing.T) {
+	own := []string{"my-key"}
+	parentKeys := []string{"somebody-elses-key"}
+
+	merged := Settings{AgentForwardCredentials: &own}.
+		merge(Settings{AgentForwardCredentials: &parentKeys})
+
+	got := merged.AgentCredentials()
+	if len(got) != 1 || got[0] != "my-key" {
+		t.Fatalf("the connection's own keys = %v, want [my-key]", got)
+	}
+}

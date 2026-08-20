@@ -9,6 +9,8 @@ import (
 
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
+	"golang.org/x/crypto/ssh/agent"
+
 	"github.com/mrbuttshooter/securecrt/internal/proto/sshx"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/vault"
@@ -192,6 +194,13 @@ type Connection struct {
 	// Carried so a terminal tab can show what it went through and the audit
 	// log can record it.
 	Via []HopInfo
+
+	// AgentKeys names the keys forwarded to this host, empty when none were.
+	//
+	// "Which keys did I expose to that switch" is a question asked after the
+	// fact, usually a bad afternoon after the fact, and it needs an answer
+	// that does not depend on the connection still being open.
+	AgentKeys []string
 }
 
 // Acquire returns a shared connection for a saved connection, dialling only
@@ -232,6 +241,21 @@ func (d *Dialer) Acquire(ctx context.Context, p Params) (*Connection, error) {
 	defer cred.Zero()
 	username := cred.Username
 
+	// The keyring, if this connection forwards one. Built before the pool is
+	// consulted for the same reason the credential is: a connection naming a
+	// key that has since been deleted should say so now.
+	//
+	// If the connection turns out to be pooled, this keyring is discarded and
+	// the one the original dial built stays in place. So editing the agent
+	// keys on a connection that is already open takes effect the next time it
+	// is dialled, which is the same staleness the credential already has and
+	// for the same reason — a shared connection has one identity, not one per
+	// caller.
+	keyring, agentKeys, err := d.buildAgent(ctx, p, resolved)
+	if err != nil {
+		return nil, err
+	}
+
 	// The route is expanded before anything is dialled, so a chain naming a
 	// host that has since been deleted fails as a broken route rather than as
 	// a mysterious connection failure.
@@ -254,7 +278,7 @@ func (d *Dialer) Acquire(ctx context.Context, p Params) (*Connection, error) {
 	lease, err := d.pool.Acquire(ctx, key,
 		func(ctx context.Context) (*sshx.Client, func(), error) {
 			progress(StatusDialling)
-			return d.dialThrough(ctx, p, resolved, hops, cred, progress)
+			return d.dialThrough(ctx, p, resolved, hops, cred, keyring, progress)
 		})
 	if err != nil {
 		return nil, err
@@ -268,7 +292,8 @@ func (d *Dialer) Acquire(ctx context.Context, p Params) (*Connection, error) {
 
 	return &Connection{
 		Lease: lease, Resolved: resolved, Username: username,
-		Via: hopInfo(hops),
+		Via:       hopInfo(hops),
+		AgentKeys: agentKeys,
 	}, nil
 }
 
@@ -351,6 +376,7 @@ func (d *Dialer) dialOne(
 	p Params,
 	resolved sessions.Resolved,
 	cred sshx.Credential,
+	keyring agent.Agent,
 	through *sshx.Client,
 	hop *HopInfo,
 	progress func(string),
@@ -439,6 +465,7 @@ func (d *Dialer) dialOne(
 		Decide:     decide,
 		KeepAlive:  keepAlive,
 		Transport:  transport,
+		Agent:      keyring,
 	})
 	if err != nil {
 		return nil, classify(err, resolved, lastVerdict, lastCheck)

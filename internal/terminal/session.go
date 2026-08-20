@@ -54,6 +54,15 @@ type Terminal struct {
 	Username  string
 	CreatedAt time.Time
 
+	// AgentKeys names the keys forwarded to this host, empty when none were.
+	AgentKeys []string
+
+	// AgentRefused is set when keys were offered and the host would not take
+	// them. The terminal works; the keys are simply not there, and the user
+	// has to be told now rather than discovering it when an authentication
+	// fails somewhere else.
+	AgentRefused bool
+
 	lease *remote.Lease
 	shell *sshx.Session
 	log   *slog.Logger
@@ -212,6 +221,9 @@ type OpenParams struct {
 	Username  string
 	Cols      int
 	Rows      int
+
+	// AgentKeys names the keys this connection forwards, for the record.
+	AgentKeys []string
 }
 
 // Open starts a shell on a leased SSH connection and registers it.
@@ -248,13 +260,17 @@ func (m *Manager) Open(lease *remote.Lease, p OpenParams) (*Terminal, error) {
 		Host:      target.Hostname,
 		Port:      target.Port,
 		CreatedAt: time.Now().UTC(),
-		lease:     lease,
-		shell:     shell,
-		log:       m.log,
-		replay:    newRingBuffer(ReplayBytes),
-		cols:      cols,
-		rows:      rows,
-		done:      make(chan struct{}),
+
+		AgentKeys:    p.AgentKeys,
+		AgentRefused: shell.AgentRefused() != nil,
+
+		lease:  lease,
+		shell:  shell,
+		log:    m.log,
+		replay: newRingBuffer(ReplayBytes),
+		cols:   cols,
+		rows:   rows,
+		done:   make(chan struct{}),
 	}
 
 	m.mu.Lock()

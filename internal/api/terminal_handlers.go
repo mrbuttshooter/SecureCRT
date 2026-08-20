@@ -199,6 +199,42 @@ func (a *API) openTerminal(
 		},
 	})
 
+	if len(term.AgentKeys) > 0 {
+		// A separate record from the connection itself, because it answers a
+		// different question and has to be findable on its own: not "did
+		// somebody open a shell here" but "which keys were in this host's
+		// reach, and when".
+		//
+		// The key is "keys_offered". forbiddenDetailKeys matches substrings,
+		// so anything containing "credential_secret" or "private_key" would
+		// be dropped by the recorder and the record would say an agent was
+		// forwarded without saying what was in it.
+		a.audit.Record(ctx, audit.Event{
+			ActorID: u.ID, ActorEmail: u.Email, IPAddress: a.clientIP(r),
+			Action: audit.ActionAgentForwarded, TargetType: "session",
+			TargetID: savedSessionID, TargetLabel: term.Label,
+			Detail: map[string]any{
+				"host": term.Host, "port": term.Port,
+				"keys_offered": term.AgentKeys,
+				"accepted":     !term.AgentRefused,
+				"terminal_id":  term.ID,
+			},
+		})
+
+		if term.AgentRefused {
+			// Said out loud rather than logged. Somebody who ticked this box
+			// is about to try an authentication that will fail three hops
+			// away, and "the host would not take it" is the only useful
+			// moment to learn why.
+			writeControl(ctx, conn, a, terminal.Control{
+				Type: terminal.ControlWarning,
+				Code: "agent_refused",
+				Message: "This host declined the forwarded agent, so your keys " +
+					"are not available from it. Its sshd sets AllowAgentForwarding no.",
+			})
+		}
+	}
+
 	return term, nil
 }
 

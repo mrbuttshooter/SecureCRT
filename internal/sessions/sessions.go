@@ -97,6 +97,34 @@ type Settings struct {
 
 	// LogSession records the transcript to disk when set.
 	LogSession *bool `json:"log_session,omitempty"`
+
+	// AgentForwardCredentials names the keys to offer through a forwarded
+	// SSH agent on this connection. Nil or empty means no agent is forwarded,
+	// which is the only sensible default.
+	//
+	// One field rather than a switch and a list: "forwarding is on but no
+	// keys are named" is not a state worth being able to express, and having
+	// two sources of truth for one decision is how a security setting ends up
+	// half-applied.
+	//
+	// **Never inherited from a folder.** See merge, which skips it on
+	// purpose. A folder default here would silently offer somebody's keys to
+	// every host inside that folder, and the person who set the default would
+	// be the last to know.
+	AgentForwardCredentials *[]string `json:"agent_forward_credentials,omitempty"`
+}
+
+// ForwardsAgent reports whether this connection offers an agent.
+func (s Settings) ForwardsAgent() bool {
+	return s.AgentForwardCredentials != nil && len(*s.AgentForwardCredentials) > 0
+}
+
+// AgentCredentials returns the keys to offer, or nothing.
+func (s Settings) AgentCredentials() []string {
+	if !s.ForwardsAgent() {
+		return nil
+	}
+	return append([]string(nil), (*s.AgentForwardCredentials)...)
 }
 
 // merge returns a copy of s with any unset field taken from parent.
@@ -129,6 +157,18 @@ func (s Settings) merge(parent Settings) Settings {
 	if out.LogSession == nil {
 		out.LogSession = parent.LogSession
 	}
+
+	// AgentForwardCredentials is absent from this list deliberately, and the
+	// omission is the feature. Forwarding an agent means a host can use those
+	// keys, for as long as the connection lives, to authenticate anywhere they
+	// are accepted — so a compromised device in a folder of forty would have
+	// the run of the other thirty-nine. Every other setting here is a
+	// convenience; this one is an authority, and an authority granted by
+	// inheritance is one nobody remembers granting.
+	//
+	// A test asserts this. Adding the field to merge would be a one-line
+	// change that looks like tidying up.
+
 	return out
 }
 

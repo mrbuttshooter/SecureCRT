@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mrbuttshooter/securecrt/internal/audit"
+	"github.com/mrbuttshooter/securecrt/internal/credentials"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 )
 
@@ -95,6 +97,11 @@ func (a *API) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := a.checkAgentKeys(r.Context(), u.ID, req.Defaults, true); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
+
 	var defaults sessions.Settings
 	if req.Defaults != nil {
 		defaults = *req.Defaults
@@ -129,6 +136,11 @@ func (a *API) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 		Defaults  *sessions.Settings `json:"defaults"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
+
+	if err := a.checkAgentKeys(r.Context(), u.ID, req.Defaults, true); err != nil {
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
 		return
 	}
@@ -218,6 +230,11 @@ func (a *API) handleCreateSavedSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := a.checkAgentKeys(r.Context(), u.ID, req.Settings, false); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
+
 	var settings sessions.Settings
 	if req.Settings != nil {
 		settings = *req.Settings
@@ -272,6 +289,11 @@ func (a *API) handleUpdateSavedSession(w http.ResponseWriter, r *http.Request) {
 		SortOrder    *int               `json:"sort_order"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
+		return
+	}
+
+	if err := a.checkAgentKeys(r.Context(), u.ID, req.Settings, false); err != nil {
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, err.Error())
 		return
 	}
@@ -455,4 +477,45 @@ func isTreeValidationError(err error) bool {
 		}
 	}
 	return false
+}
+
+// checkAgentKeys validates the agent-forwarding setting at write time.
+//
+// Two failures, and both would otherwise surface as something else much
+// later:
+//
+//   - A key that is not the user's, or is not a key at all. Caught at dial
+//     time regardless — buildAgent scopes every lookup to the owner — but
+//     "you cannot connect" is a poor way to learn you picked the wrong entry
+//     from a list.
+//   - The setting on a *folder*, where it does nothing. Settings.merge
+//     deliberately does not inherit it, so a folder default here is silently
+//     ignored. Silently ignoring a security setting somebody believes they
+//     have turned on is worse than either turning it on or refusing it, so
+//     this refuses it and says why.
+func (a *API) checkAgentKeys(
+	ctx context.Context, userID string, settings *sessions.Settings, onFolder bool,
+) error {
+	if settings == nil || !settings.ForwardsAgent() {
+		return nil
+	}
+
+	if onFolder {
+		return errors.New(
+			"Agent forwarding cannot be set on a folder. It would offer your keys " +
+				"to every host inside it, including ones added later, so it is set " +
+				"per connection.")
+	}
+
+	for _, id := range settings.AgentCredentials() {
+		cred, err := a.credentials.Get(ctx, userID, id)
+		if err != nil {
+			return errors.New("One of the agent keys does not exist.")
+		}
+		if cred.Kind != credentials.KindSSHKey {
+			return fmt.Errorf(
+				"%q is a password. Only keys can be offered through an agent.", cred.Name)
+		}
+	}
+	return nil
 }

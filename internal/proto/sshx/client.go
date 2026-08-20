@@ -24,6 +24,7 @@ import (
 
 	"github.com/mrbuttshooter/securecrt/internal/hostkeys"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 // Errors callers distinguish.
@@ -168,6 +169,18 @@ type Config struct {
 	// prompt they were answering.
 	HandshakeTimeout time.Duration
 
+	// Agent is an SSH agent to forward to the far end. Nil forwards nothing,
+	// which is the default and stays the default.
+	//
+	// Not the user's own agent — there is no channel back to a browser — but
+	// an in-memory keyring the server builds from credentials the user named.
+	// The consequence for the remote host is identical to real agent
+	// forwarding, and so is the risk: a compromised host can use these keys,
+	// for anything they open, for as long as this connection lives. What is
+	// better here is only the scope, which is the keys named rather than
+	// whatever an agent happened to be holding.
+	Agent agent.Agent
+
 	// KeepAlive is how often to send a keepalive request. Terminals sit idle
 	// for long stretches, and a NAT or firewall in between will drop an idle
 	// flow without telling either end; the keepalive is what stops a session
@@ -200,7 +213,14 @@ type Client struct {
 	// unsynchronised bool.
 	mu      sync.Mutex
 	stopped bool
+
+	// keyring is the agent forwarded on this connection, kept so each shell
+	// can request forwarding for its own session. Nil forwards nothing.
+	keyring agent.Agent
 }
+
+// ForwardsAgent reports whether this connection offers an agent.
+func (c *Client) ForwardsAgent() bool { return c.keyring != nil }
 
 // Dial opens an SSH connection.
 func Dial(ctx context.Context, cfg Config) (*Client, error) {
@@ -265,9 +285,21 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	client := &Client{
-		conn:   ssh.NewClient(sshConn, chans, reqs),
-		target: cfg.Target,
-		closed: make(chan struct{}),
+		conn:    ssh.NewClient(sshConn, chans, reqs),
+		target:  cfg.Target,
+		closed:  make(chan struct{}),
+		keyring: cfg.Agent,
+	}
+
+	if cfg.Agent != nil {
+		// Registers the handler for auth-agent@openssh.com channels the far
+		// end opens back. Nothing is exposed until a session also asks for
+		// forwarding, which Shell does — so a connection carrying a keyring
+		// that never starts a shell has offered nothing.
+		if err := agent.ForwardToAgent(client.conn, cfg.Agent); err != nil {
+			_ = client.conn.Close()
+			return nil, fmt.Errorf("sshx: forwarding the agent: %w", err)
+		}
 	}
 
 	keepAlive := cfg.KeepAlive
@@ -568,11 +600,24 @@ type Session struct {
 	session *ssh.Session
 	stdin   io.WriteCloser
 	stdout  io.Reader
+
+	// agentRefused is set when this connection carried an agent and the host
+	// would not take it. Not an error for the shell — the terminal is fine —
+	// but the user has to be told, or they will find out by watching an
+	// authentication fail three hops away.
+	agentRefused error
 }
+
+// AgentRefused reports the host declining a forwarded agent, or nil.
+func (s *Session) AgentRefused() error { return s.agentRefused }
 
 // Shell starts an interactive login shell on a new pseudo-terminal.
 func (c *Client) Shell(pty PTYConfig) (*Session, error) {
 	pty = pty.withDefaults()
+
+	// Recorded rather than logged: this package has no logger, and the
+	// caller is the one that can tell the user their keys are not there.
+	var agentRefused error
 
 	session, err := c.conn.NewSession()
 	if err != nil {
@@ -589,6 +634,21 @@ func (c *Client) Shell(pty PTYConfig) (*Session, error) {
 	if err := session.RequestPty(pty.Term, pty.Rows, pty.Cols, modes); err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("sshx: request pty: %w", err)
+	}
+
+	if c.keyring != nil {
+		// Before Shell, and it has to be: a request after the shell has
+		// started is answered by the shell's own channel handling rather than
+		// the session's, and OpenSSH ignores it.
+		//
+		// A refusal is not fatal. Plenty of hosts are configured with
+		// AllowAgentForwarding no, and a terminal that opens without the
+		// agent is far better than one that does not open — the user finds
+		// out when a key is not offered, which is the same way they would
+		// find out with OpenSSH.
+		if err := agent.RequestAgentForwarding(session); err != nil {
+			agentRefused = err
+		}
 	}
 
 	stdin, err := session.StdinPipe()
@@ -612,7 +672,10 @@ func (c *Client) Shell(pty PTYConfig) (*Session, error) {
 		return nil, fmt.Errorf("sshx: start shell: %w", err)
 	}
 
-	return &Session{session: session, stdin: stdin, stdout: stdout}, nil
+	return &Session{
+		session: session, stdin: stdin, stdout: stdout,
+		agentRefused: agentRefused,
+	}, nil
 }
 
 // Read returns terminal output.

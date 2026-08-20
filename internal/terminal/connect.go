@@ -90,6 +90,7 @@ func (c *Connector) Connect(ctx context.Context, p ConnectParams) (*Terminal, er
 		Username:  conn.Username,
 		Cols:      p.Cols,
 		Rows:      p.Rows,
+		AgentKeys: conn.AgentKeys,
 	})
 	if err != nil {
 		// The lease has to go back, or a failed shell would hold the

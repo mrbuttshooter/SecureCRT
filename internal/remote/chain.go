@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"golang.org/x/crypto/ssh/agent"
+
 	"github.com/mrbuttshooter/securecrt/internal/proto/sshx"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 )
@@ -79,6 +81,7 @@ func (d *Dialer) dialThrough(
 	target sessions.Resolved,
 	hops []sessions.Resolved,
 	cred sshx.Credential,
+	keyring agent.Agent,
 	progress func(string),
 ) (*sshx.Client, func(), error) {
 	var (
@@ -105,6 +108,21 @@ func (d *Dialer) dialThrough(
 			return unwind(viaError(info, err))
 		}
 
+		// Each hop's own saved connection decides whether it gets an agent.
+		//
+		// Not the target's: `ssh -A -J bastion host` offers the agent to the
+		// bastion as well, and here it does not unless the bastion's own
+		// connection says so. That is a deliberate departure. A bastion is
+		// the machine most worth compromising and the one a user is least
+		// likely to be thinking about when they tick a box on a switch three
+		// hops away, so exposing keys to it is a decision taken about the
+		// bastion, on the bastion.
+		hopAgent, _, err := d.buildAgent(ctx, p, hop)
+		if err != nil {
+			hopCred.Zero()
+			return unwind(viaError(info, err))
+		}
+
 		// Captured per iteration: the transport for this hop is the client
 		// from the previous one, which must not be re-read after the loop
 		// moves on.
@@ -114,7 +132,7 @@ func (d *Dialer) dialThrough(
 		lease, err := d.pool.Acquire(ctx, key,
 			func(ctx context.Context) (*sshx.Client, func(), error) {
 				progress(StatusDiallingHop)
-				client, err := d.dialOne(ctx, p, hop, hopCred, parent, &info, progress)
+				client, err := d.dialOne(ctx, p, hop, hopCred, hopAgent, parent, &info, progress)
 				// A hop borrows nothing of its own: its transport is held by
 				// the entry of the hop in front of it, or is this host.
 				return client, nil, err
@@ -134,7 +152,7 @@ func (d *Dialer) dialThrough(
 		route = append(route, hop.ID)
 	}
 
-	client, err := d.dialOne(ctx, p, target, cred, through, nil, progress)
+	client, err := d.dialOne(ctx, p, target, cred, keyring, through, nil, progress)
 	if err != nil {
 		return unwind(err)
 	}
