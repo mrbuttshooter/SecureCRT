@@ -194,8 +194,14 @@ func (a *API) openTerminal(
 		Action: audit.ActionTerminalConnected, TargetType: "session",
 		TargetID: savedSessionID, TargetLabel: term.Label,
 		Detail: map[string]any{
-			"host": term.Host, "port": term.Port,
-			"username": term.Username, "terminal_id": term.ID,
+			"protocol": string(term.Transport.Protocol),
+			"host":     term.Transport.Host, "port": term.Transport.Port,
+			"device": term.Transport.Device,
+			// Recorded per connection rather than inferred from the protocol
+			// later: "was this password sent in the clear" is a question with
+			// a definite answer at this moment and a guess afterwards.
+			"encrypted": term.Transport.Encrypted(),
+			"username":  term.Username, "terminal_id": term.ID,
 		},
 	})
 
@@ -214,7 +220,7 @@ func (a *API) openTerminal(
 			Action: audit.ActionAgentForwarded, TargetType: "session",
 			TargetID: savedSessionID, TargetLabel: term.Label,
 			Detail: map[string]any{
-				"host": term.Host, "port": term.Port,
+				"host": term.Transport.Host, "port": term.Transport.Port,
 				"keys_offered": term.AgentKeys,
 				"accepted":     !term.AgentRefused,
 				"terminal_id":  term.ID,

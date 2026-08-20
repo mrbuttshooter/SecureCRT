@@ -3,6 +3,9 @@ package terminal
 import (
 	"context"
 	"log/slog"
+	"strings"
+
+	"github.com/mrbuttshooter/securecrt/internal/proto/sshx"
 
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
@@ -83,15 +86,15 @@ func (c *Connector) Connect(ctx context.Context, p ConnectParams) (*Terminal, er
 		return nil, err
 	}
 
-	term, err := c.manager.Open(conn.Lease, OpenParams{
-		UserID:    p.UserID,
-		SessionID: conn.Resolved.ID,
-		Label:     conn.Resolved.Name,
-		Username:  conn.Username,
-		Cols:      p.Cols,
-		Rows:      p.Rows,
-		AgentKeys: conn.AgentKeys,
-	})
+	cols, rows := p.Cols, p.Rows
+	if cols <= 0 {
+		cols = 80
+	}
+	if rows <= 0 {
+		rows = 24
+	}
+
+	shell, err := conn.Client().Shell(sshx.PTYConfig{Cols: cols, Rows: rows})
 	if err != nil {
 		// The lease has to go back, or a failed shell would hold the
 		// connection open with nothing using it.
@@ -103,7 +106,48 @@ func (c *Connector) Connect(ctx context.Context, p ConnectParams) (*Terminal, er
 		}
 	}
 
+	target := conn.Client().Target()
+
+	term, err := c.manager.Open(shell, conn.Release, OpenParams{
+		UserID:    p.UserID,
+		SessionID: conn.Resolved.ID,
+		Label:     conn.Resolved.Name,
+		Username:  conn.Username,
+		Cols:      cols,
+		Rows:      rows,
+		AgentKeys: conn.AgentKeys,
+
+		AgentRefused: shell.AgentRefused() != nil,
+		Transport: Transport{
+			Protocol: sessions.ProtocolSSH,
+			Host:     target.Hostname,
+			Port:     target.Port,
+			Detail:   viaDetail(conn.Via),
+		},
+	})
+	if err != nil {
+		_ = shell.Close()
+		conn.Release()
+		return nil, &ConnectError{
+			Code:    remote.CodeInternal,
+			Message: "The remote shell could not be started.",
+			Err:     err,
+		}
+	}
+
 	return term, nil
+}
+
+// viaDetail summarises the route for the terminal header.
+func viaDetail(hops []remote.HopInfo) string {
+	if len(hops) == 0 {
+		return ""
+	}
+	names := make([]string, len(hops))
+	for i, hop := range hops {
+		names[i] = hop.Name
+	}
+	return "via " + strings.Join(names, " → ")
 }
 
 // Resolved re-exports the saved-connection type the dial path returns, so

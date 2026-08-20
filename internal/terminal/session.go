@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mrbuttshooter/securecrt/internal/proto/sshx"
-	"github.com/mrbuttshooter/securecrt/internal/remote"
 )
 
 // Errors returned by this package.
@@ -36,10 +35,10 @@ const ReplayBytes = 256 * 1024
 // left it, including whatever was mid-edit.
 const DetachedGrace = 15 * time.Minute
 
-// Terminal is a live SSH shell owned by the server.
+// Terminal is a live interactive session owned by the server.
 //
 // Its lifetime is deliberately independent of any WebSocket. Browsers attach
-// and detach; the shell keeps running.
+// and detach; the session keeps running.
 type Terminal struct {
 	ID     string
 	UserID string
@@ -48,9 +47,12 @@ type Terminal struct {
 	// one. Empty for an ad-hoc connection.
 	SessionID string
 
-	Label     string
-	Host      string
-	Port      int
+	Label string
+
+	// Transport records what this session is running over — SSH, telnet or a
+	// serial line — and how it was reached.
+	Transport Transport
+
 	Username  string
 	CreatedAt time.Time
 
@@ -63,9 +65,13 @@ type Terminal struct {
 	// fails somewhere else.
 	AgentRefused bool
 
-	lease *remote.Lease
-	shell *sshx.Session
+	shell Shell
 	log   *slog.Logger
+
+	// release gives back whatever the shell borrowed: a pool lease for SSH,
+	// the exclusive claim on a device for serial, nothing for telnet. Called
+	// once, after the shell is closed.
+	release func()
 
 	mu       sync.Mutex
 	replay   *ringBuffer
@@ -189,7 +195,7 @@ func (m *Manager) reapOnce(now time.Time) int {
 
 	for _, t := range abandoned {
 		m.log.Info("closing abandoned terminal",
-			"terminal", t.ID, "user", t.UserID, "host", t.Host,
+			"terminal", t.ID, "user", t.UserID, "host", t.Transport.Host,
 			"detached_for", now.Sub(t.detachedAt).Round(time.Second))
 		t.close(errors.New("terminal: abandoned"))
 	}
@@ -224,14 +230,28 @@ type OpenParams struct {
 
 	// AgentKeys names the keys this connection forwards, for the record.
 	AgentKeys []string
+
+	// AgentRefused reports a host that declined a forwarded agent.
+	AgentRefused bool
+
+	// Transport says what this session runs over and how it was reached.
+	Transport Transport
 }
 
-// Open starts a shell on a leased SSH connection and registers it.
+// Open registers a shell somebody else opened and starts pumping it.
 //
-// The Manager takes ownership of the lease: closing the terminal releases it,
-// which closes the connection only if nothing else — a file browser, a second
-// terminal — still holds one.
-func (m *Manager) Open(lease *remote.Lease, p OpenParams) (*Terminal, error) {
+// The Manager takes ownership: closing the terminal closes the shell and then
+// calls release, which for SSH gives back a pool lease — closing the
+// underlying connection only if nothing else, a file browser or a second
+// terminal, still holds one — and for a serial line gives back the exclusive
+// claim on the device.
+//
+// The shell arrives already open rather than being dialled here, because the
+// three protocols have nothing in common at that point: one negotiates a pty
+// on a multiplexed connection, one negotiates telnet options on a bare
+// socket, and one sets termios on a file descriptor. What they have in common
+// starts once bytes are flowing, which is exactly where this begins.
+func (m *Manager) Open(shell Shell, release func(), p OpenParams) (*Terminal, error) {
 	cols, rows := p.Cols, p.Rows
 	if cols <= 0 {
 		cols = 80
@@ -239,38 +259,29 @@ func (m *Manager) Open(lease *remote.Lease, p OpenParams) (*Terminal, error) {
 	if rows <= 0 {
 		rows = 24
 	}
-
-	client := lease.Client()
-
-	shell, err := client.Shell(sshx.PTYConfig{Cols: cols, Rows: rows})
-	if err != nil {
-		// The lease goes back rather than the connection being closed: another
-		// holder may be using it perfectly happily.
-		lease.Release()
-		return nil, err
+	if release == nil {
+		release = func() {}
 	}
 
-	target := client.Target()
 	t := &Terminal{
 		ID:        uuid.Must(uuid.NewV7()).String(),
 		UserID:    p.UserID,
 		SessionID: p.SessionID,
 		Label:     p.Label,
+		Transport: p.Transport,
 		Username:  p.Username,
-		Host:      target.Hostname,
-		Port:      target.Port,
 		CreatedAt: time.Now().UTC(),
 
 		AgentKeys:    p.AgentKeys,
-		AgentRefused: shell.AgentRefused() != nil,
+		AgentRefused: p.AgentRefused,
 
-		lease:  lease,
-		shell:  shell,
-		log:    m.log,
-		replay: newRingBuffer(ReplayBytes),
-		cols:   cols,
-		rows:   rows,
-		done:   make(chan struct{}),
+		shell:   shell,
+		release: release,
+		log:     m.log,
+		replay:  newRingBuffer(ReplayBytes),
+		cols:    cols,
+		rows:    rows,
+		done:    make(chan struct{}),
 	}
 
 	m.mu.Lock()
@@ -477,10 +488,11 @@ func (t *Terminal) close(cause error) {
 
 	_ = t.shell.Close()
 
-	// Release, not close. The SSH connection may still be carrying a file
-	// browser or another terminal on the same host, and ending a shell must
+	// Then give back whatever it borrowed. For SSH that is a pool lease
+	// rather than the connection itself: it may still be carrying a file
+	// browser or another terminal on the same host, and ending one shell must
 	// not take those with it.
-	t.lease.Release()
+	t.release()
 }
 
 // Get returns a terminal, checking ownership.
@@ -518,11 +530,22 @@ func (m *Manager) CloseTerminal(userID, terminalID string) error {
 
 // Info summarises a terminal for listing.
 type Info struct {
-	ID        string    `json:"id"`
-	SessionID string    `json:"session_id,omitempty"`
-	Label     string    `json:"label"`
-	Host      string    `json:"host"`
-	Port      int       `json:"port"`
+	ID        string `json:"id"`
+	SessionID string `json:"session_id,omitempty"`
+	Label     string `json:"label"`
+
+	Protocol string `json:"protocol"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+
+	// Device is the serial port's path, empty for everything else.
+	Device string `json:"device,omitempty"`
+
+	// Encrypted is false for telnet and for a raw serial-over-network link.
+	// Carried so the interface can mark the tab rather than leaving somebody
+	// to remember which of nine tabs is sending a password in the clear.
+	Encrypted bool `json:"encrypted"`
+
 	Username  string    `json:"username,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	Attached  bool      `json:"attached"`
@@ -547,8 +570,11 @@ func (m *Manager) ListForUser(userID string) []Info {
 			ID:        t.ID,
 			SessionID: t.SessionID,
 			Label:     t.Label,
-			Host:      t.Host,
-			Port:      t.Port,
+			Protocol:  string(t.Transport.Protocol),
+			Host:      t.Transport.Host,
+			Port:      t.Transport.Port,
+			Device:    t.Transport.Device,
+			Encrypted: t.Transport.Encrypted(),
 			Username:  t.Username,
 			CreatedAt: t.CreatedAt,
 			Attached:  t.attached != nil,
