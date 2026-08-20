@@ -84,22 +84,21 @@ failure, not a warning. Full details and the threat model are in
 On a fresh Debian or Ubuntu server, one command takes you from nothing to a
 working install over real HTTPS.
 
-While this repository is private you need a GitHub token with read access to
-it — create a fine-grained one at **Settings → Developer settings → Personal
-access tokens**, scoped to this repository with *Contents: read*:
-
 ```sh
-export GH_TOKEN=github_pat_...
-
-curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw" \
-  "https://api.github.com/repos/mrbuttshooter/SecureCRT/contents/deploy/quickstart.sh?ref=claude/vigilant-bell-11pf3z" \
-  | sudo BKD_GITHUB_TOKEN="$GH_TOKEN" bash
+git clone -b claude/vigilant-bell-11pf3z https://github.com/mrbuttshooter/SecureCRT.git
+cd SecureCRT && sudo ./deploy/quickstart.sh
 ```
 
-The API endpoint rather than `raw.githubusercontent.com`: the branch name
-contains a slash, and the raw URL has no way to tell where the branch ends and
-the path begins. Once the repository is public, or on a branch without a slash
-in its name, the plain raw URL works too.
+Clone and run, rather than piping from a URL. `raw.githubusercontent.com`
+caches for several minutes, so a `curl … | bash` shortly after a push runs the
+previous version of the script against the current version of the source —
+which fails in ways that make no sense from the output, because the two halves
+disagree. Cloning gets one consistent tree, and you can read what you are about
+to run as root.
+
+If the repository is private, the clone needs a token — create a fine-grained
+one at **Settings → Developer settings → Personal access tokens**, scoped to
+this repository with *Contents: read*, and pass it as `BKD_GITHUB_TOKEN`.
 
 It installs the dependencies, builds, configures Caddy in front for TLS,
 creates an administrator and prints the URL and password. With no domain of

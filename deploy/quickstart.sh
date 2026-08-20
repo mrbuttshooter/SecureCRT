@@ -2,9 +2,13 @@
 #
 # Bare Debian/Ubuntu host → a working Bridgekeeper over real HTTPS, in one go.
 #
-#   curl -fsSL <this file> | sudo bash
-#   # or, from a clone:
-#   sudo ./deploy/quickstart.sh
+#   git clone -b <branch> https://github.com/mrbuttshooter/SecureCRT.git
+#   cd SecureCRT && sudo ./deploy/quickstart.sh
+#
+# Clone and run rather than piping from a URL. raw.githubusercontent.com
+# caches for several minutes, so curl | bash shortly after a push executes the
+# previous script against the source the fresh clone just pulled — and the two
+# halves disagreeing produces failures that make no sense from the output.
 #
 # This is the "let me look at it" path, not the production one. It picks
 # SQLite, puts Caddy in front for TLS, and creates one administrator. For a
