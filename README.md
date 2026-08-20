@@ -81,6 +81,22 @@ failure, not a warning. Full details and the threat model are in
 
 ## Trying it
 
+On a fresh Debian or Ubuntu server, one command takes you from nothing to a
+working install over real HTTPS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mrbuttshooter/SecureCRT/claude/vigilant-bell-11pf3z/deploy/quickstart.sh | sudo bash
+```
+
+It installs the dependencies, builds, configures Caddy in front for TLS,
+creates an administrator and prints the URL and password. With no domain of
+your own it serves on `<your-ip>.sslip.io`, which is a real hostname and so
+gets a real certificate — set `BKD_HOSTNAME` once you have your own. For a
+company-wide install use [`deploy/install.sh`](deploy/install.sh) with
+PostgreSQL and read [`docs/SECURITY.md`](docs/SECURITY.md) first.
+
+### Or locally
+
 Requires Go 1.25+, and Node 22 with pnpm for the frontend.
 
 ```sh
