@@ -19,6 +19,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/mrbuttshooter/securecrt/internal/proto/sshx"
@@ -35,6 +37,36 @@ var ErrPoolClosed = errors.New("remote: the connection pool is closed")
 type Key struct {
 	UserID    string
 	SessionID string
+
+	// Via is the route taken to reach SessionID: the jump hosts hopped
+	// through, in order, joined by ">". Empty for a direct dial.
+	//
+	// Without it, a host reachable both directly and through a bastion would
+	// share one entry, and the second caller would silently get the wrong
+	// transport — which is worse than failing, because the direct route may
+	// be reachable from this server while the tunnelled one is not, or the
+	// two may reach different devices entirely.
+	//
+	// It also gives sharing for free at the other end: the first hop of every
+	// chain has an empty Via, which is *the same key* a plain terminal on
+	// that bastion uses. Fifty devices behind one bastion and somebody's own
+	// shell on it are one TCP connection, one authentication, one vty line.
+	Via string
+}
+
+// PathKey builds the key for reaching sessionID through hops.
+func PathKey(userID string, hops []string, sessionID string) Key {
+	return Key{UserID: userID, SessionID: sessionID, Via: strings.Join(hops, ">")}
+}
+
+// depth reports how many hops the route has, so shutdown can close the
+// deepest connections first — a tunnelled connection needs a live bastion
+// underneath it to send its disconnect through.
+func (k Key) depth() int {
+	if k.Via == "" {
+		return 0
+	}
+	return strings.Count(k.Via, ">") + 1
 }
 
 // Pool holds live SSH connections, one per Key.
@@ -56,6 +88,16 @@ type entry struct {
 	ready  chan struct{}
 	client *sshx.Client
 	err    error
+
+	// release gives back whatever the dial borrowed to build this connection
+	// — in practice the leases on the jump hosts it was reached through.
+	//
+	// It belongs to the entry rather than to each Lease because Acquire runs
+	// the dial at most once per key: the second and subsequent callers take
+	// the reference-count fast path and never see it. If hop leases were held
+	// per-lease, those callers would have to take them separately, which
+	// reopens the dial-coalescing race this pool exists to close.
+	release func()
 
 	// refs counts outstanding leases. The connection closes when it reaches
 	// zero, and not before.
@@ -97,7 +139,7 @@ func (l *Lease) Release() {
 }
 
 // DialFunc opens a connection. Called at most once per Key at a time.
-type DialFunc func(ctx context.Context) (*sshx.Client, error)
+type DialFunc func(ctx context.Context) (*sshx.Client, func(), error)
 
 // Acquire returns a lease on the connection for key, dialling if there is not
 // one already.
@@ -123,10 +165,10 @@ func (p *Pool) Acquire(ctx context.Context, key Key, dial DialFunc) (*Lease, err
 	p.conns[key] = fresh
 	p.mu.Unlock()
 
-	client, err := dial(ctx)
+	client, release, err := dial(ctx)
 
 	p.mu.Lock()
-	fresh.client, fresh.err = client, err
+	fresh.client, fresh.release, fresh.err = client, release, err
 	if err != nil {
 		// A failed dial is not cached: the next attempt should try again
 		// rather than inherit a stale failure, and anyone waiting on this
@@ -137,6 +179,11 @@ func (p *Pool) Acquire(ctx context.Context, key Key, dial DialFunc) (*Lease, err
 	close(fresh.ready)
 
 	if err != nil {
+		// A dial that got three hops along and then failed must not keep
+		// those three bastions pinned for the life of the process.
+		if release != nil {
+			release()
+		}
 		return nil, err
 	}
 
@@ -188,10 +235,18 @@ func (p *Pool) release(e *entry) {
 		p.evict(e)
 	}
 	client := e.client
+	release := e.release
 	p.mu.Unlock()
 
-	if last && client != nil {
-		_ = client.Close()
+	if last {
+		// The connection first, then the transport it rode on: a disconnect
+		// still has somewhere to go.
+		if client != nil {
+			_ = client.Close()
+		}
+		if release != nil {
+			release()
+		}
 	}
 }
 
@@ -214,18 +269,43 @@ func (p *Pool) Close() {
 	p.mu.Lock()
 	p.closed = true
 
-	clients := make([]*sshx.Client, 0, len(p.conns))
+	// Snapshotted under the lock rather than carrying entry pointers out of
+	// it: a dial still in flight writes client and release when it finishes,
+	// and reading those fields outside the mutex is a data race.
+	type doomed struct {
+		depth   int
+		client  *sshx.Client
+		release func()
+	}
+
+	entries := make([]doomed, 0, len(p.conns))
 	for key, e := range p.conns {
-		if e.client != nil {
-			clients = append(clients, e.client)
-		}
+		entries = append(entries, doomed{
+			depth: e.key.depth(), client: e.client, release: e.release,
+		})
 		e.evicted = true
 		delete(p.conns, key)
 	}
 	p.mu.Unlock()
 
-	for _, client := range clients {
-		_ = client.Close()
+	// Deepest route first. A connection reached through a bastion needs that
+	// bastion still up to send its disconnect through; closing the bastion
+	// first would leave every host behind it to time the session out itself.
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].depth > entries[j].depth
+	})
+
+	for _, e := range entries {
+		if e.client != nil {
+			_ = e.client.Close()
+		}
+		// Released as well as closed. The hop entries are in this same map
+		// and being torn down anyway, so this is bookkeeping rather than
+		// lifecycle — but skipping it would leave a reference count that a
+		// surviving Lease could later decrement below zero.
+		if e.release != nil {
+			e.release()
+		}
 	}
 }
 

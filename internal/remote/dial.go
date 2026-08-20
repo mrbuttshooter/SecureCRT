@@ -20,7 +20,13 @@ import (
 // Without them the user stares at a blank rectangle wondering whether
 // anything is happening.
 const (
-	StatusDialling       = "dialling"
+	StatusDialling = "dialling"
+
+	// StatusDiallingHop is reported per jump host. A chain of three takes
+	// three handshakes and three host key checks, and a user watching a blank
+	// rectangle deserves to know which one is slow.
+	StatusDiallingHop = "dialling_hop"
+
 	StatusVerifyingHost  = "verifying_host"
 	StatusAuthenticating = "authenticating"
 	StatusConnected      = "connected"
@@ -52,6 +58,11 @@ const (
 	// CodeNotFound means the saved connection is unknown.
 	CodeNotFound = "not_found"
 
+	// CodeJumpChain means the route through jump hosts is unusable — a hop
+	// was deleted, or the chain loops. Distinct from unreachable on purpose:
+	// nothing was dialled, so nothing timed out and no host refused anything.
+	CodeJumpChain = "jump_chain_invalid"
+
 	// CodeInternal is anything else.
 	CodeInternal = "internal_error"
 )
@@ -75,6 +86,14 @@ type HostKeyInfo struct {
 	// OrgWide reports that the recorded key was published by an
 	// administrator, which means the user cannot override it.
 	OrgWide bool `json:"org_wide,omitempty"`
+
+	// Label is the saved connection's name, so a prompt can say which device
+	// this is rather than only which address.
+	Label string `json:"label,omitempty"`
+
+	// JumpHop is set when this key belongs to a jump host rather than to the
+	// connection the user asked for.
+	JumpHop *HopInfo `json:"jump_hop,omitempty"`
 }
 
 // HostKeyPrompter asks the user to approve an unrecognised host key.
@@ -99,6 +118,11 @@ type Error struct {
 	// HostKey carries the fingerprints when the failure was a changed key,
 	// so the interface can show what was expected and what was offered.
 	HostKey *HostKeyInfo
+
+	// Hop names the jump host a failure happened on, when it was not the
+	// connection the user asked for. Without it, "the host refused the
+	// credential" sends somebody to debug a device that never saw one.
+	Hop *HopInfo
 }
 
 func (e *Error) Error() string {
@@ -163,6 +187,11 @@ type Connection struct {
 	// Username is who the connection authenticated as, which is not always
 	// the connection's own username — a credential can carry one.
 	Username string
+
+	// Via is the route taken, outermost hop first, empty for a direct dial.
+	// Carried so a terminal tab can show what it went through and the audit
+	// log can record it.
+	Via []HopInfo
 }
 
 // Acquire returns a shared connection for a saved connection, dialling only
@@ -203,12 +232,30 @@ func (d *Dialer) Acquire(ctx context.Context, p Params) (*Connection, error) {
 	defer cred.Zero()
 	username := cred.Username
 
-	key := Key{UserID: p.UserID, SessionID: resolved.ID}
+	// The route is expanded before anything is dialled, so a chain naming a
+	// host that has since been deleted fails as a broken route rather than as
+	// a mysterious connection failure.
+	hops, err := d.sessions.ExpandJumpChain(ctx, p.UserID, resolved.ID)
+	if err != nil {
+		return nil, &Error{
+			Code: CodeJumpChain,
+			Message: "This connection is reached through jump hosts, and that route " +
+				"is no longer usable. Check the jump hosts on the connection.",
+			Err: err,
+		}
+	}
 
-	lease, err := d.pool.Acquire(ctx, key, func(ctx context.Context) (*sshx.Client, error) {
-		progress(StatusDialling)
-		return d.dial(ctx, p, resolved, cred, progress)
-	})
+	route := make([]string, len(hops))
+	for i, hop := range hops {
+		route[i] = hop.ID
+	}
+	key := PathKey(p.UserID, route, resolved.ID)
+
+	lease, err := d.pool.Acquire(ctx, key,
+		func(ctx context.Context) (*sshx.Client, func(), error) {
+			progress(StatusDialling)
+			return d.dialThrough(ctx, p, resolved, hops, cred, progress)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +266,10 @@ func (d *Dialer) Acquire(ctx context.Context, p Params) (*Connection, error) {
 		d.log.Warn("recording session use", "error", err)
 	}
 
-	return &Connection{Lease: lease, Resolved: resolved, Username: username}, nil
+	return &Connection{
+		Lease: lease, Resolved: resolved, Username: username,
+		Via: hopInfo(hops),
+	}, nil
 }
 
 // buildCredential decrypts the credential a saved connection names.
@@ -284,11 +334,25 @@ func (d *Dialer) buildCredential(ctx context.Context, p Params, resolved session
 }
 
 // dial opens the SSH connection, wiring host key verification to the prompter.
-func (d *Dialer) dial(
+// dialOne opens a connection to a single node, which may be the connection the
+// user asked for or a jump host on the way to it.
+//
+// Every closure below reads from `resolved`, which is the node actually being
+// dialled — not the eventual target. That distinction is the whole of per-hop
+// identity: a bastion is verified under its own hostname and port, prompted
+// for under its own name, and recorded in the trust store as itself. Reusing
+// the target's identity here would trust a bastion's key under the target's
+// hostname, which corrupts the trust store and shows the user a fingerprint
+// attributed to a device that never presented it.
+//
+// through is the connection to dial from. Nil means from this host.
+func (d *Dialer) dialOne(
 	ctx context.Context,
 	p Params,
 	resolved sessions.Resolved,
 	cred sshx.Credential,
+	through *sshx.Client,
+	hop *HopInfo,
 	progress func(string),
 ) (*sshx.Client, error) {
 	// Records what the verification decided, so a failure can be reported
@@ -328,6 +392,14 @@ func (d *Dialer) dial(
 				Port:        resolved.EffectivePort,
 				KeyType:     check.Presented.KeyType,
 				Fingerprint: check.Presented.Fingerprint,
+				Label:       resolved.Name,
+			}
+			if hop != nil {
+				// Somebody approving a fingerprint has to know which device
+				// they are approving. A prompt naming an unexplained hostname
+				// the user did not ask to connect to is how people learn to
+				// click through host key prompts.
+				info.JumpHop = hop
 			}
 
 			accepted, err := p.Prompter.PromptHostKey(ctx, info)
@@ -355,12 +427,18 @@ func (d *Dialer) dial(
 		keepAlive = time.Duration(*resolved.Settings.KeepAliveSeconds) * time.Second
 	}
 
+	var transport sshx.Transport
+	if through != nil {
+		transport = sshx.ThroughClient(through)
+	}
+
 	client, err := sshx.Dial(ctx, sshx.Config{
 		Target:     sshx.Target{Hostname: resolved.Hostname, Port: resolved.EffectivePort},
 		Credential: cred,
 		Verify:     verify,
 		Decide:     decide,
 		KeepAlive:  keepAlive,
+		Transport:  transport,
 	})
 	if err != nil {
 		return nil, classify(err, resolved, lastVerdict, lastCheck)

@@ -190,9 +190,9 @@ func TestAFailedDialIsNotCached(t *testing.T) {
 	boom := errors.New("the host was down")
 
 	var attempts atomic.Int32
-	failing := func(context.Context) (*sshx.Client, error) {
+	failing := func(context.Context) (*sshx.Client, func(), error) {
 		attempts.Add(1)
-		return nil, boom
+		return nil, nil, boom
 	}
 
 	if _, err := pool.Acquire(context.Background(), key, failing); !errors.Is(err, boom) {
@@ -224,9 +224,9 @@ func TestWaitersSeeADialFailure(t *testing.T) {
 	boom := errors.New("refused")
 
 	release := make(chan struct{})
-	slowFailure := func(context.Context) (*sshx.Client, error) {
+	slowFailure := func(context.Context) (*sshx.Client, func(), error) {
 		<-release
-		return nil, boom
+		return nil, nil, boom
 	}
 
 	errs := make(chan error, 2)
@@ -270,7 +270,7 @@ func TestACancelledWaiterGivesItsReferenceBack(t *testing.T) {
 	key := Key{UserID: "alice", SessionID: "switch-1"}
 
 	release := make(chan struct{})
-	gated := func(ctx context.Context) (*sshx.Client, error) {
+	gated := func(ctx context.Context) (*sshx.Client, func(), error) {
 		<-release
 		return srv.dial(ctx)
 	}
@@ -476,7 +476,7 @@ func (ts *sshTestServer) dials() int {
 	return ts.count
 }
 
-func (ts *sshTestServer) dial(ctx context.Context) (*sshx.Client, error) {
+func (ts *sshTestServer) dial(ctx context.Context) (*sshx.Client, func(), error) {
 	ts.mu.Lock()
 	ts.count++
 	delay := ts.dialDelay
@@ -486,11 +486,11 @@ func (ts *sshTestServer) dial(ctx context.Context) (*sshx.Client, error) {
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
 	}
 
-	return sshx.Dial(ctx, sshx.Config{
+	client, err := sshx.Dial(ctx, sshx.Config{
 		Target:     sshx.Target{Hostname: ts.Host, Port: ts.Port},
 		Credential: sshx.Credential{Username: "tester", Password: "anything"},
 		Verify: func(context.Context, string, int, ssh.PublicKey) (hostkeys.Check, error) {
@@ -498,4 +498,5 @@ func (ts *sshTestServer) dial(ctx context.Context) (*sshx.Client, error) {
 		},
 		Decide: func(context.Context, hostkeys.Check) error { return nil },
 	})
+	return client, nil, err
 }
