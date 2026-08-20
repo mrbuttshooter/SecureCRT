@@ -138,7 +138,7 @@ export function App() {
         "switch tab and back" must not wipe the screen.
       */}
       <div hidden={tab !== 'terminal'} className="tabpanel">
-        <Workspace />
+        <Workspace active={tab === 'terminal'} />
       </div>
       {tab === 'files' && <Files />}
       {tab === 'credentials' && <Credentials />}

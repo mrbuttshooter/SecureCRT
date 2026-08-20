@@ -86,21 +86,56 @@ Named in the original scope and deliberately not built:
   better than a queue relaying it second-hand. The server-side queue exists
   for the work with no browser in the middle.
 
-## Phase 4 — Import and export
+## Phase 4 — Import and export ✅
 
-**Import:** SecureCRT config folders and `.ini` sessions *including saved
-passwords*, PuTTY sessions and `.ppk` keys, `~/.ssh/config` with OpenSSH keys,
-CSV/spreadsheet host lists. Preview before anything is written.
+- [x] SecureCRT configuration folders and `.ini` sessions, **including saved
+      passwords** — both password formats, legacy double-Blowfish and V2
+      AES-256, with or without a configuration passphrase
+- [x] PuTTY sessions from a `.reg` export or a `.putty` directory
+- [x] PuTTY `.ppk` keys converted to OpenSSH, versions 2 and 3, encrypted or
+      not, RSA / ECDSA / ed25519, and joined to the sessions that name them
+- [x] `~/.ssh/config` with its keys, `known_hosts`, and `ProxyJump` chains
+      rebuilt by name
+- [x] CSV and spreadsheet host lists, with columns matched by what real
+      spreadsheets are actually called
+- [x] Preview before anything is written, in the browser and on the command
+      line alike; a staged preview is dropped when the vault is locked
+- [x] Encrypted `.bkbundle` export under a passphrase given at export time
+- [x] Export to `~/.ssh/config`, SecureCRT `.ini`, PuTTY `.reg`, JSON and CSV,
+      each reporting what the format could not express
+- [x] Plaintext export of secrets gated behind an explicit confirmation and a
+      critical audit event that must land before the bytes go out, and
+      disableable org-wide
+- [x] `bkd import` and `bkd export` for migrating a team without the browser
+- [x] [`docs/MIGRATING.md`](MIGRATING.md)
+- [x] Browser end-to-end suite over the whole journey, in and out
 
-**Export:** a full-fidelity `.bkbundle` encrypted under a passphrase given at
-export time; plus `~/.ssh/config`, SecureCRT `.ini` (to go back), PuTTY `.reg`,
-JSON and CSV. Plaintext export is gated behind the vault passphrase, an
-explicit confirmation and a critical audit event, and admins can disable it.
+**Round trip, the definition of done:** export → a second instance with its own
+database and its own master key → import → the same connections, the same key
+fingerprints, the same passwords. It is
+`TestTheRoundTripThroughTheCommandLine` in `internal/server`, and it runs on
+every build.
 
-Definition of done includes a round-trip test: export → wipe → import on a
-second instance → byte-identical sessions, key fingerprints and passwords.
+Every `.ppk` fixture in `internal/portability/ppk/testdata` was produced by
+PuTTY's own puttygen, and beside each one is puttygen's OpenSSH export of the
+same key. The tests check that what this converts to has the fingerprint PuTTY
+says it has, and that a signature made with the converted key verifies under
+the public key PuTTY published — a parser checked only against its own encoder
+would prove nothing but self-consistency.
 
-## Phase 5 — Tunnels and jump hosts
+Two things named in the original scope are worth being explicit about:
+
+- **"Byte-identical sessions"** was the wrong bar and is not what the round
+  trip asserts. Identifiers are reassigned on import, deliberately — importing
+  a bundle twice must produce two trees rather than a silent overwrite — so
+  what is checked is that every field a person can observe survives: hostname,
+  port, username, folder path, key fingerprint, password.
+- **The gate is about secrets, not formats.** Exporting an `ssh_config` with no
+  keys or passwords in it is not gated at all, whatever
+  `policy.allow_plaintext_export` says. Refusing it would be holding people by
+  making the exit difficult, which is not what that setting is for.
+
+## Phase 5 — Tunnels and jump hosts — next
 
 Proxy-jump chains of arbitrary depth with per-hop credentials, local and
 remote port forwarding, dynamic SOCKS5, X11 forwarding, agent forwarding with

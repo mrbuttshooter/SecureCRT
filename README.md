@@ -15,9 +15,12 @@ saved passwords from any machine, with nothing installed locally.
 
 ## Status
 
-Usable for its core purpose: sign in, store credentials, open SSH sessions
-in a browser, and move files to and from the hosts you reach. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phase
-plan and for what each completed phase actually contains.
+Usable for its core purpose, and there is now a way in and a way out: sign in,
+bring your connections across from SecureCRT, PuTTY or OpenSSH, open SSH
+sessions in a browser, move files to and from the hosts you reach — and export
+the lot again whenever you want to. See [`docs/ROADMAP.md`](docs/ROADMAP.md)
+for the phase plan and what each completed phase actually contains, and
+[`docs/MIGRATING.md`](docs/MIGRATING.md) for moving a team over.
 
 | Phase | Scope | State |
 |---|---|---|
@@ -25,8 +28,8 @@ plan and for what each completed phase actually contains.
 | 1 | Identity, SSO, MFA & credential vault | **complete** |
 | 2 | SSH terminal | **complete** |
 | 3 | SFTP file transfer | **complete** |
-| 4 | Import / export (SecureCRT, PuTTY, OpenSSH) | next |
-| 5 | Tunnels & jump hosts | not started |
+| 4 | Import / export (SecureCRT, PuTTY, OpenSSH) | **complete** |
+| 5 | Tunnels & jump hosts | next |
 | 6 | Telnet, serial & console servers | not started |
 | 7 | Power-user features (broadcast, snippets, triggers) | not started |
 | 8 | Enterprise (RBAC, session recording) | SSO delivered early, in Phase 1 |
@@ -90,6 +93,17 @@ make release                      # frontend, then the static binary
 
 Then open the address in `server.external_url`. Sign in, choose a vault
 passphrase, and generate a key.
+
+To bring your existing connections with you, zip your SecureCRT configuration
+folder (or your `.putty` or `.ssh` directory) and upload it under **Import /
+export**. Nothing is written until you have read what would happen. For a whole
+team there is a command-line equivalent, and both are covered in
+[`docs/MIGRATING.md`](docs/MIGRATING.md):
+
+```sh
+./bin/bkd import -user you@example.com -source securecrt -file config.zip
+./bin/bkd import -user you@example.com -source securecrt -file config.zip -commit
+```
 
 For single sign-on against Microsoft Entra, follow
 [`docs/SSO-SETUP.md`](docs/SSO-SETUP.md) and check it with:

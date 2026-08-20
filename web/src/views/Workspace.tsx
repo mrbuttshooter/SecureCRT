@@ -45,7 +45,7 @@ const DEFAULT_PREFS: Prefs = { theme: 'dark', fontSize: 14, scrollback: 10_000, 
  * the server would still hold the session, but the visible history would be
  * gone, which is not what "switch tab and back" should mean.
  */
-export function Workspace() {
+export function Workspace({ active }: { active: boolean }) {
   const [tree, setTree] = useState<Tree>({ folders: [], sessions: [] })
   const [live, setLive] = useState<LiveTerminal[]>([])
   const [tabs, setTabs] = useState<Tab[]>([])
@@ -83,10 +83,17 @@ export function Workspace() {
     }
   }, [])
 
+  // Reloaded whenever this becomes the visible tab, not only on mount. The
+  // workspace stays mounted while another tab is in front — that is what
+  // keeps terminals alive — so without this an import of two hundred devices
+  // performed on the transfer tab would leave the connection tree looking
+  // exactly as empty as before, and the obvious conclusion would be that the
+  // import had failed. One GET on each switch is a cheap way not to lie.
   useEffect(() => {
+    if (!active) return
     void loadTree()
     void loadLive()
-  }, [loadTree, loadLive])
+  }, [active, loadTree, loadLive])
 
   const liveSessionIds = useMemo(
     () => new Set(live.filter((t) => !t.closed && t.session_id).map((t) => t.session_id!)),

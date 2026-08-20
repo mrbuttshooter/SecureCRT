@@ -92,11 +92,44 @@ EOF
 # experience or on an empty list would then depend on which file happened to
 # run first. An earlier version did, and broke the moment a third spec was
 # added.
-for account in admin terminal files; do
+for account in admin terminal files transfer; do
     echo "a very long admin password" | \
         ./bin/bkd admin create-user --config "$WORKDIR/config.yaml" \
             -email "${account}@example.com" -name "Test ${account}" -admin >/dev/null
 done
+
+# Configurations to migrate, built here rather than checked in as fixtures so
+# they are unmistakably the shape a real desktop produces: a zipped folder,
+# with everything one level down inside it.
+info "building configurations to import"
+
+mkdir -p "$WORKDIR/import/Config/Sessions/Edge routers"
+cat > "$WORKDIR/import/Config/Sessions/core-sw-01.ini" <<'INI'
+S:"Protocol Name"=SSH2
+S:"Hostname"=10.77.0.1
+S:"Username"=netops
+D:"[SSH2] Port"=00000016
+INI
+cat > "$WORKDIR/import/Config/Sessions/Edge routers/edge-rtr-01.ini" <<'INI'
+S:"Protocol Name"=SSH2
+S:"Hostname"=10.77.1.1
+S:"Username"=admin
+INI
+(cd "$WORKDIR/import" && zip -qr "$WORKDIR/securecrt.zip" Config)
+
+mkdir -p "$WORKDIR/putty/putty/sessions"
+cp internal/portability/ppk/testdata/v3-ed25519.ppk "$WORKDIR/putty/putty/core.ppk"
+cat > "$WORKDIR/putty/putty/sessions/dist%20switch" <<'PUTTY'
+HostName=10.77.2.1
+PortNumber=22
+UserName=netops
+Protocol=ssh
+PublicKeyFile=C:\Users\netops\core.ppk
+PUTTY
+(cd "$WORKDIR/putty" && zip -qr "$WORKDIR/putty.zip" putty)
+
+export BKD_E2E_SECURECRT_ZIP="$WORKDIR/securecrt.zip"
+export BKD_E2E_PUTTY_ZIP="$WORKDIR/putty.zip"
 
 # Real SSH servers with a real pty and a real SFTP subsystem. The Go tests use
 # in-process ones with canned handlers, which proves the protocol; these prove
@@ -193,6 +226,8 @@ set +e
     BKD_E2E_SSH_USER="$SSH_USER" \
     BKD_E2E_SSH_PASSWORD="$SSH_PASSWORD" \
     BKD_E2E_CHROMIUM="${BKD_E2E_CHROMIUM:-}" \
+    BKD_E2E_SECURECRT_ZIP="$BKD_E2E_SECURECRT_ZIP" \
+    BKD_E2E_PUTTY_ZIP="$BKD_E2E_PUTTY_ZIP" \
     npx playwright test "$@")
 STATUS=$?
 set -e

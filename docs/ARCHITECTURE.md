@@ -190,11 +190,49 @@ Downloads are always `Content-Disposition: attachment`. A file fetched from a
 managed host must never render in this origin, where an HTML or SVG payload
 would execute as though this application had served it.
 
+## Import and export
+
+Everything a person owns can leave and come back, which is a design constraint
+rather than a feature: a tool nobody can leave is a tool nobody should adopt.
+
+Three properties shape the code.
+
+**One reader, two doors.** `portability.ReadUpload` turns uploaded bytes into a
+payload, and both the HTTP endpoint and `bkd import` call it. The handler's
+whole job is translating form fields into options. An import cannot behave
+differently depending on which door it came through, because there is only one
+implementation for it to differ from.
+
+**Preview is a separate step from writing.** An upload is parsed, matched
+against what the user already has, and answered with a plan — new connections,
+name collisions, whether key material came across. The parsed payload waits in
+memory under a token for fifteen minutes; nothing reaches the database until
+that token is redeemed, and redeeming consumes it, so pressing the button twice
+on a slow connection imports once. Locking the vault discards every staged
+import, because a staged import holds decrypted passwords and "lock" has to
+mean what it says.
+
+**The bundle is the only encrypted format.** A `.bkbundle` is two lines: a
+readable JSON header, then one `vault.Envelope` sealed under a key derived from
+a passphrase given at export time. The header is bound in as additional
+authenticated data — via the SHA-256 of its exact bytes — so editing it to
+claim different key-derivation parameters breaks decryption rather than
+weakening it. What the readable half discloses is stated in
+[`SECURITY.md`](SECURITY.md).
+
+Every other format is plaintext, and each one loses something: an `ssh_config`
+cannot express a password, a `.reg` has nowhere to put a key. So an export
+reports what the format could not carry rather than dropping it silently.
+Exporting *secrets* in a plaintext format is gated on policy, an explicit
+confirmation and a critical audit event that must be written before the bytes
+go out. Exporting the same format *without* secrets is not gated at all — it
+carries no credentials, and it is how somebody leaves for plain OpenSSH.
+
 ## Layout
 
 | Path | Responsibility |
 |---|---|
-| `cmd/bkd` | CLI: serve, migrate, rollback, gen-master-key, version |
+| `cmd/bkd` | CLI: serve, migrate, rollback, gen-master-key, admin, import, export, test-sso, version |
 | `internal/server` | wiring, lifecycle, routing, health |
 | `internal/config` | defaults → YAML → `BKD_*` env, with validation |
 | `internal/store` | schema, migrations, portable data access |
@@ -209,7 +247,9 @@ would execute as though this application had served it.
 | `internal/terminal` | live SSH sessions, the WebSocket bridge, survival |
 | `internal/proto/sshx`, `internal/proto/sftpx` | SSH and SFTP |
 | `internal/proto/*` | Telnet, serial, tunnels *(phases 5–6)* |
-| `internal/portability` | import and export adapters *(phase 4)* |
+| `internal/portability` | import and export adapters, and the upload reader both the API and the CLI drive |
+| `internal/portability/ppk` | PuTTY private key files, converted to OpenSSH |
+| `internal/portability/securecrt` | SecureCRT's two password formats and its `.ini` syntax |
 | `internal/api` | REST and WebSocket surface |
 | `internal/audit` | append-only event writer |
 | `web/` | React frontend, embedded into the binary |

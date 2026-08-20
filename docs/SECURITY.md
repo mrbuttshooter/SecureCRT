@@ -240,6 +240,101 @@ system-call filter, and a single writable path.
 `bkd` binds to loopback and speaks plain HTTP; TLS terminates in nginx or
 Caddy in front of it.
 
+## Import and export
+
+### What a bundle discloses before its passphrase
+
+A `.bkbundle` is two lines. The first is readable JSON and is **not**
+encrypted; the second is one AES-256-GCM envelope holding everything else.
+
+The readable half carries the format and version, when the bundle was made,
+the email address of the account it came from, whatever note the exporter
+wrote, the key-derivation parameters, and a count of each kind of record —
+"31 connections, 12 credentials, 40 host keys".
+
+This is a deliberate trade, and what it costs is worth stating plainly.
+Somebody who finds the file learns that this account exists, roughly how large
+their estate is, and when the export was taken. What they do not learn is a
+single hostname, username, key or password: all of that is in the encrypted
+half.
+
+The alternative — encrypting the header too — would mean a file nobody can
+identify without trying its passphrase, and an interface that cannot say "this
+bundle holds 31 connections, made on the 3rd of March" before asking for it.
+Recovering an unlabelled `.bkbundle` from a backup six months later is a
+realistic problem; the disclosure above is not much of one.
+
+The header cannot be tampered with. Its exact bytes are hashed into the
+envelope's additional authenticated data, so editing it — to claim weaker
+key-derivation parameters, say — makes the file fail to decrypt rather than
+decrypt more easily.
+
+### Passwords arriving from SecureCRT
+
+SecureCRT's saved passwords are not meaningfully protected, in either format
+it has used:
+
+- **Legacy**: Blowfish under two keys shipped in every installation.
+- **V2**: AES-256-CBC under SHA-256 of the configuration passphrase — or of a
+  fixed empty string when no passphrase was set, which is the common case —
+  with an all-zero IV. Fixed key plus fixed IV makes CBC deterministic, so two
+  identical passwords produce identical ciphertext and a shared password is
+  visible as a repeated blob across a team's configuration files.
+
+The importer reads both, because that is what migrating means. There is a test
+that demonstrates the V2 leak rather than merely noting it, so nobody later
+mistakes the format for protection.
+
+The consequence for an operator: **a SecureCRT configuration folder is a
+credential store in the clear.** Copies on file shares, laptop backups and
+old handover drives should be treated as compromised credentials once the
+import is done. `docs/MIGRATING.md` says so where the person doing the
+migration will read it.
+
+### The plaintext export gate
+
+Exporting credentials in a format nothing protects is the most direct
+exfiltration path this system has, so it needs all three of:
+
+1. `policy.allow_plaintext_export`, off by default.
+2. An explicit confirmation on the request.
+3. A `portability.exported_plaintext` audit event at critical severity,
+   written **before** the file is sent. If the audit write fails, the export is
+   refused with 503 — a system that cannot record somebody taking every
+   credential out of the vault in the clear must not be the thing that hands
+   them over.
+
+The gate is on the combination, not on the format. Exporting an `ssh_config`
+or a CSV of hostnames with no keys or passwords in it is ungated: it carries
+no credentials, and refusing it would be holding people by making the exit
+difficult rather than protecting anything.
+
+### Keys converted from PuTTY
+
+A `.ppk` is authenticated by a MAC over its own contents, which is checked
+before the key material is used. That alone does not stop a forgery on an
+encrypted file — anyone who knows the passphrase can re-MAC whatever they
+like — so the two halves are also checked against each other: a key whose
+public half its private half cannot produce is refused rather than imported
+under that identity. Version 1 files, whose integrity check PuTTY itself
+withdrew in 1999 as forgeable, are refused outright.
+
+The Argon2 parameters in a version 3 file come from the file, so they are
+bounded before use. Without that, an uploaded key claiming 64 GiB of memory
+would take the server down.
+
+Converted keys are stored **without** a separate passphrase. The vault
+encrypts them under a key derived from the user's vault passphrase, and a
+second passphrase layered on top would protect against nothing while giving
+the user one more secret to lose.
+
+### Uploads
+
+Both endpoints that accept a large body are bounded before parsing, by
+`policy.max_import_bytes` and `policy.max_upload_bytes`. A request over either
+is refused rather than truncated — a truncated upload reported as a success is
+worse than a rejection, because the caller believes their file arrived.
+
 ## Audit
 
 Append-only. The application has no update or delete path for audit rows;
@@ -247,8 +342,9 @@ retention requires an explicit admin command that archives before pruning.
 
 Recorded: logins and failures, vault unlock attempts, credential create /
 read / update / delete, every connection with its target and the credential
-used, file transfers, tunnel creation, **every import and export**, and all
-admin actions.
+used, file transfers, tunnel creation, **every import and export** — including
+those run from the command line, which are recorded against the account they
+happened to — and all admin actions.
 
 Audit detail fields never contain secret material.
 
@@ -275,6 +371,15 @@ test that fails if they regress, rather than only a convention:
 | A remote filename cannot forge a response header | A test passes names containing quotes, semicolons and CRLF and asserts the header stays intact |
 | One user's file session is unreachable by another | A test opens a session, signs in as a second account, and asserts that listing it, downloading through it and enumerating it are all refused |
 | Queries work on PostgreSQL, not just SQLite | An AST-walking test rejects `ExecContext`/`QueryContext` outside `internal/store`, since those bypass placeholder rewriting |
+| A bundle's header cannot be edited to weaken it | The header's exact bytes are hashed into the AAD; a test rewrites the key-derivation parameters and asserts the file no longer opens |
+| A plaintext export of secrets cannot happen unaudited | A test makes the audit write fail and asserts the export is refused with 503 rather than served |
+| Locking the vault discards staged imports | A test stages an import, locks, and asserts the token is gone |
+| A previewed import writes nothing | Asserted through the API, through the command line, and in the browser, each time by reading the tree back afterwards |
+| A `.ppk` whose halves disagree is refused | A test grafts one key's public half onto another's private half and asserts the conversion fails |
+| Converted PuTTY keys are the keys PuTTY says they are | Every fixture comes from puttygen, with puttygen's own OpenSSH export beside it; the test compares fingerprints and verifies a signature under the published public key |
+| An oversized upload is refused, not truncated | A test uploads past the cap and asserts 413 and that no whole-looking file appears on the host |
+| An account with no vault cannot receive secrets | A test imports a payload carrying a password into a vault-less account and asserts it is refused rather than silently thinned |
+| Everything shipped in `config.example.yaml` still exists | A test loads the file operators are told to copy, and another walks the struct tags to insist every setting is mentioned in it |
 
 ## Reporting a vulnerability
 

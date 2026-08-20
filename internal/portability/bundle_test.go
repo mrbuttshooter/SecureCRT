@@ -451,3 +451,96 @@ func TestEachExportGetsAFreshSalt(t *testing.T) {
 		seen[salt] = true
 	}
 }
+
+// TestEditingTheKeyDerivationBreaksTheBundle covers the tampering that would
+// actually be worth attempting.
+//
+// The parameters cannot be encrypted — they are what the decryption needs — so
+// they sit in the readable header where anyone can edit them. Rewriting them
+// downwards, to make a passphrase cheap to guess offline, is the obvious move.
+//
+// Two independent things stop it, and both are checked here: parameters below
+// the floor are refused outright, and parameters merely *lowered* produce a
+// key that opens nothing, because the header's exact bytes are hashed into the
+// envelope's additional authenticated data.
+func TestEditingTheKeyDerivationBreaksTheBundle(t *testing.T) {
+	cases := map[string]struct {
+		time, memory uint32
+		threads      uint8
+		wantMessage  string
+	}{
+		// Refused by validation, before any key is derived.
+		"below the floor": {time: 1, memory: 1024, threads: 1, wantMessage: "floor"},
+
+		// Passes validation — this is the strongest edit an attacker can make
+		// while keeping the file readable at all — and is refused by the
+		// binding instead.
+		"lowered to the floor": {time: 1, memory: 16384, threads: 1, wantMessage: "passphrase"},
+	}
+
+	// Deliberately not writeBundle: that helper uses the cheapest parameters
+	// the floor allows, so "lowering" them would change nothing and the test
+	// would pass without testing anything.
+	strong, err := vault.NewKDFParams(3, 32*1024, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strong.Salt, err = vault.NewSalt(); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := Write(&buf, samplePayload(), WriteOptions{
+				Passphrase: []byte(testPassphrase),
+				CreatedBy:  "alice@example.com",
+				KDF:        strong,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			data := buf.Bytes()
+
+			newline := bytes.IndexByte(data, '\n')
+			var header Header
+			if err := json.Unmarshal(data[:newline], &header); err != nil {
+				t.Fatal(err)
+			}
+
+			header.KDF.Time = tc.time
+			header.KDF.MemoryKB = tc.memory
+			header.KDF.Threads = tc.threads
+
+			edited, err := json.Marshal(header)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tampered := append(append(edited, '\n'), data[newline+1:]...)
+
+			bundle, err := Read(bytes.NewReader(tampered))
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+
+			// The edit really did take, and really is a weakening. Without
+			// both checks a fixture that already used these parameters would
+			// make this test pass while proving nothing.
+			if bundle.Header.KDF.MemoryKB != tc.memory {
+				t.Fatalf("memory is %d, want the edited %d",
+					bundle.Header.KDF.MemoryKB, tc.memory)
+			}
+			if tc.memory >= strong.MemoryKB && tc.time >= strong.Time {
+				t.Fatalf("this edit does not weaken anything: %d/%d against %d/%d",
+					tc.time, tc.memory, strong.Time, strong.MemoryKB)
+			}
+
+			_, err = bundle.Open([]byte(testPassphrase))
+			if err == nil {
+				t.Fatal("the correct passphrase opened a tampered bundle")
+			}
+			if !strings.Contains(err.Error(), tc.wantMessage) {
+				t.Errorf("open = %v, want it to mention %q", err, tc.wantMessage)
+			}
+		})
+	}
+}

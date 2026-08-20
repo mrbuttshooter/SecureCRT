@@ -683,3 +683,58 @@ func TestAnImportInsideTheLimitStillWorks(t *testing.T) {
 		t.Fatalf("no staging token was issued: %v", body)
 	}
 }
+
+// TestAnUnauditablePlaintextExportIsRefused is the one place in this system
+// where failing to write a log line stops the work rather than being warned
+// about.
+//
+// A plaintext export with secrets takes every credential out of the vault in
+// the clear. If that cannot be recorded, the honest answer is to refuse: a
+// system unable to say who took them must not be the thing that hands them
+// over. Every other audit failure is logged and stepped past, because refusing
+// a download or a directory listing over a log line would be absurd.
+func TestAnUnauditablePlaintextExportIsRefused(t *testing.T) {
+	h := signedInWithVault(t, allowPlaintextExport)
+
+	// Something to export, so a failure cannot be about an empty tree.
+	h.post("/api/credentials", map[string]string{
+		"name": "a password", "kind": "password", "secret": "hunter2",
+	})
+
+	// The audit log is append-only by design, so there is no application path
+	// that breaks it. Removing the table is the honest way to simulate the
+	// disk or the database being gone underneath.
+	if _, err := h.db.DB.Exec("DROP TABLE audit_events"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := h.exportFile(t, map[string]any{
+		"format": "json", "confirm": true, "include_secrets": true,
+	})
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("= %d, want 503: %s", resp.StatusCode, body)
+	}
+	if strings.Contains(string(body), "hunter2") {
+		t.Fatal("the refusal carried the secret it refused to export")
+	}
+}
+
+// TestAnUnauditableExportWithoutSecretsStillSucceeds is the other half: the
+// refusal above is specific to credentials leaving in the clear, not a general
+// rule that the audit log gates every request. A device list is not worth
+// refusing over a log line.
+func TestAnUnauditableExportWithoutSecretsStillSucceeds(t *testing.T) {
+	h := signedInWithVault(t, allowPlaintextExport)
+
+	if _, err := h.db.DB.Exec("DROP TABLE audit_events"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, _ := h.exportFile(t, map[string]any{
+		"format": "json", "include_secrets": false,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("= %d, want 200", resp.StatusCode)
+	}
+}
