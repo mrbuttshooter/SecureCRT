@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mrbuttshooter/securecrt/internal/config"
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/vault"
 )
@@ -20,6 +21,11 @@ import (
 type Config struct {
 	// AllowListeners gates the kinds that open a port on this server.
 	AllowListeners bool
+
+	// AllowRemoteForwards gates asking a device to listen on our behalf.
+	// Separate from AllowListeners because it exposes a different thing: not
+	// one host to this machine, but this machine's network to one host.
+	AllowRemoteForwards bool
 
 	// Bind is the address those listeners bind.
 	Bind string
@@ -36,6 +42,31 @@ type Config struct {
 
 	// IdleTimeout closes a tunnel nothing has used.
 	IdleTimeout time.Duration
+}
+
+// ConfigFrom reads the manager's settings out of the operator's file.
+//
+// One place, called by both the server and the test harness. They had a copy
+// each for exactly one commit, and in that commit a new setting reached the
+// server and not the tests, so every test of it passed against a manager that
+// had never been told about it.
+//
+// An unparseable port range yields a zero span, which allocatePort reports as
+// ErrNoPortAvailable. That is the right failure: Validate refuses to start
+// with a bad range whenever listeners are on, so the only way to arrive here
+// with one is with the feature switched off, where no port is wanted anyway.
+func ConfigFrom(cfg config.Config) Config {
+	low, high, _ := config.ParsePortRange(cfg.Tunnels.PortRange)
+	return Config{
+		AllowListeners:      cfg.Policy.AllowTCPTunnels,
+		AllowRemoteForwards: cfg.Policy.AllowRemoteForwards,
+		Bind:                cfg.Tunnels.Bind,
+		PortLow:             low,
+		PortHigh:            high,
+		Domain:              cfg.Tunnels.Domain,
+		MaxPerUser:          cfg.Tunnels.MaxPerUser,
+		IdleTimeout:         cfg.Tunnels.IdleTimeout,
+	}
 }
 
 // Manager owns every live tunnel.
@@ -87,6 +118,9 @@ func (m *Manager) WebTunnelsEnabled() bool { return m.cfg.Domain != "" }
 // ListenersEnabled reports whether ports may be opened on this server.
 func (m *Manager) ListenersEnabled() bool { return m.cfg.AllowListeners }
 
+// RemoteForwardsEnabled reports whether a device may be asked to listen.
+func (m *Manager) RemoteForwardsEnabled() bool { return m.cfg.AllowRemoteForwards }
+
 // Domain returns the configured wildcard base.
 func (m *Manager) Domain() string { return m.cfg.Domain }
 
@@ -97,10 +131,15 @@ type OpenParams struct {
 	Kind      Kind
 	Label     string
 
-	// Host and Port are where a local tunnel forwards to. Ignored by the
-	// other kinds.
+	// Host and Port are where a local tunnel forwards to over SSH, and where
+	// a remote tunnel dials to from this server. Ignored by the other kinds.
 	Host string
 	Port int
+
+	// RemoteBind and RemotePort are where a remote tunnel asks the device to
+	// listen. Zero port means the device picks.
+	RemoteBind string
+	RemotePort int
 
 	VaultKey vault.Key
 	Prompter remote.HostKeyPrompter
@@ -118,12 +157,26 @@ func (m *Manager) Open(ctx context.Context, p OpenParams) (*Tunnel, error) {
 	if p.Kind.NeedsListener() && !m.cfg.AllowListeners {
 		return nil, ErrListenersOff
 	}
-	if p.Kind == KindLocal {
+	if p.Kind.ListensRemotely() && !m.cfg.AllowRemoteForwards {
+		return nil, ErrRemoteOff
+	}
+	if p.Kind == KindLocal || p.Kind == KindRemote {
 		if p.Host == "" {
-			return nil, fmt.Errorf("tunnel: a local tunnel needs somewhere to forward to")
+			return nil, fmt.Errorf("tunnel: a %s tunnel needs somewhere to forward to", p.Kind)
 		}
 		if p.Port < 1 || p.Port > 65535 {
 			return nil, fmt.Errorf("tunnel: port %d is out of range", p.Port)
+		}
+	}
+	if p.Kind == KindRemote {
+		if p.RemotePort < 0 || p.RemotePort > 65535 {
+			return nil, fmt.Errorf("tunnel: remote port %d is out of range", p.RemotePort)
+		}
+		// Checked here only to fail early and legibly. The guard that
+		// actually holds runs on every connection, against the addresses
+		// resolved at that moment — see destination.go.
+		if _, err := resolveDestination(ctx, p.Host); err != nil {
+			return nil, err
 		}
 	}
 	if p.Kind == KindWeb && p.Port == 0 {
@@ -147,14 +200,22 @@ func (m *Manager) Open(ctx context.Context, p OpenParams) (*Tunnel, error) {
 
 	t := newTunnel(p.UserID, p.SessionID, p.Label, p.Kind, conn)
 	t.Host, t.Port = p.Host, p.Port
+	t.RemoteBind, t.RemotePort = p.RemoteBind, p.RemotePort
 
 	// The tunnel's own context, so closing it stops every forwarded
 	// connection rather than waiting for each to notice.
 	tunnelCtx, cancel := context.WithCancel(context.Background())
 	t.cancel = cancel
 
-	if p.Kind.NeedsListener() {
+	switch {
+	case p.Kind.NeedsListener():
 		if err := m.listen(tunnelCtx, t); err != nil {
+			cancel()
+			conn.Release()
+			return nil, err
+		}
+	case p.Kind.ListensRemotely():
+		if err := m.listenRemote(tunnelCtx, t); err != nil {
 			cancel()
 			conn.Release()
 			return nil, err
@@ -216,11 +277,48 @@ func (m *Manager) listen(ctx context.Context, t *Tunnel) error {
 	}
 
 	t.listener = listener
+	t.localPort = port
 	t.mu.Lock()
 	t.listenAddr = addr
 	t.mu.Unlock()
 
-	go m.accept(ctx, t, port)
+	go m.accept(ctx, t)
+	return nil
+}
+
+// listenRemote asks the device at the far end to listen, and serves whatever
+// arrives there.
+//
+// No port is allocated here: the port is on the device, chosen by whoever
+// opened the tunnel or by the device itself. Which means this needs none of
+// tunnels.bind or tunnels.port_range — those settings bound what this machine
+// exposes, and this exposes nothing on this machine.
+func (m *Manager) listenRemote(ctx context.Context, t *Tunnel) error {
+	bind := t.RemoteBind
+	if bind == "" {
+		// Empty means "whatever the device defaults to". OpenSSH reads that
+		// as loopback unless GatewayPorts is set, which is the conservative
+		// reading and the right one to inherit.
+		bind = "localhost"
+	}
+	addr := net.JoinHostPort(bind, strconv.Itoa(t.RemotePort))
+
+	listener, err := t.conn.Client().Conn().Listen("tcp", addr)
+	if err != nil {
+		// Almost always the far end's own policy: AllowTcpForwarding no, or
+		// GatewayPorts refusing a non-loopback bind, or the port already
+		// taken. None of those are this server's to fix, so say whose they are.
+		return fmt.Errorf("%w (%s): %w", ErrRemoteBind, addr, err)
+	}
+
+	t.listener = listener
+	t.mu.Lock()
+	// What the device actually bound, which is the number the user needs when
+	// they asked for port 0.
+	t.listenAddr = listener.Addr().String()
+	t.mu.Unlock()
+
+	go m.accept(ctx, t)
 	return nil
 }
 
@@ -312,15 +410,15 @@ func (m *Manager) Close(userID, id string) error {
 }
 
 // forget closes a tunnel and gives back its port.
+//
+// localPort rather than the listener's address: a remote tunnel's listener
+// reports a port on the device, and freeing that number here would release a
+// port in our own range that another tunnel is still using.
 func (m *Manager) forget(t *Tunnel) {
 	t.close()
 
-	if t.listener != nil {
-		if _, portStr, err := net.SplitHostPort(t.listener.Addr().String()); err == nil {
-			if port, err := strconv.Atoi(portStr); err == nil {
-				m.releasePort(port)
-			}
-		}
+	if t.localPort != 0 {
+		m.releasePort(t.localPort)
 	}
 }
 

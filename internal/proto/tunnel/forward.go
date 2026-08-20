@@ -16,7 +16,11 @@ import (
 const copyBufferSize = 64 * 1024
 
 // accept serves a listening tunnel until its context ends.
-func (m *Manager) accept(ctx context.Context, t *Tunnel, port int) {
+//
+// One loop for both directions. A remote tunnel's listener is an
+// *ssh.tcpListener rather than a *net.TCPListener, but it is a net.Listener
+// either way, and everything that differs is in serve.
+func (m *Manager) accept(ctx context.Context, t *Tunnel) {
 	for {
 		conn, err := t.listener.Accept()
 		if err != nil {
@@ -48,7 +52,24 @@ func (m *Manager) accept(ctx context.Context, t *Tunnel, port int) {
 }
 
 // serve handles one accepted connection.
+//
+// The naming reads oddly for a remote tunnel and is worth stating plainly:
+// `local` is always the side that was accepted and `far` always the side that
+// is dialled. For a local or SOCKS tunnel the accepted side really is on this
+// machine and the dialled side is over SSH. For a remote tunnel it is the
+// other way round — the accepted side arrived over SSH from the device, and
+// the dialled side is on this server's own network. Which is exactly why it
+// goes through dialDestination rather than a bare net.Dial.
 func (m *Manager) serve(ctx context.Context, t *Tunnel, local net.Conn) error {
+	if t.Kind == KindRemote {
+		far, err := dialDestination(ctx, t.Host, t.Port)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = far.Close() }()
+		return pipe(ctx, t, local, far)
+	}
+
 	host, port := t.Host, t.Port
 
 	if t.Kind == KindSOCKS {

@@ -191,16 +191,7 @@ func (s *Server) buildAPI(ctx context.Context) error {
 	// Port range failures are already refused by config validation when
 	// listeners are enabled; when they are not, a nonsense range is simply
 	// never used, so a parse failure here is not worth refusing to start.
-	portLow, portHigh, _ := config.ParsePortRange(s.cfg.Tunnels.PortRange)
-	s.tunnels = tunnel.NewManager(tunnel.Config{
-		AllowListeners: s.cfg.Policy.AllowTCPTunnels,
-		Bind:           s.cfg.Tunnels.Bind,
-		PortLow:        portLow,
-		PortHigh:       portHigh,
-		Domain:         s.cfg.Tunnels.Domain,
-		MaxPerUser:     s.cfg.Tunnels.MaxPerUser,
-		IdleTimeout:    s.cfg.Tunnels.IdleTimeout,
-	}, dialer, s.log)
+	s.tunnels = tunnel.NewManager(tunnel.ConfigFrom(s.cfg), dialer, s.log)
 
 	s.api, err = api.New(apiCfg, api.Deps{
 		DB:           s.db,
@@ -349,6 +340,12 @@ func (s *Server) warnOnRiskyPolicy() {
 			"whoever can reach the bind address reaches whatever is behind them, "+
 			"with no account here",
 			"bind", s.cfg.Tunnels.Bind, "ports", s.cfg.Tunnels.PortRange)
+	}
+	if s.cfg.Policy.AllowRemoteForwards {
+		s.log.Warn("policy allows remote forwarding; a user can ask a device to " +
+			"listen on this server's behalf, and whoever reaches that port on the " +
+			"device reaches this server's network. Loopback and link-local " +
+			"destinations are refused, but nothing else is")
 	}
 }
 

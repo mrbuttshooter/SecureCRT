@@ -216,6 +216,20 @@ type PolicyConfig struct {
 	// without authenticating to bkd at all. The bind address below is the
 	// other half of that decision.
 	AllowTCPTunnels bool `yaml:"allow_tcp_tunnels"`
+
+	// AllowRemoteForwards lets users ask a remote host to listen on bkd's
+	// behalf — `ssh -R`. A connection arriving at that port on the device is
+	// carried back here and dialled *from this server*.
+	//
+	// Off by default, and for a different reason than the setting above.
+	// A local tunnel lets someone who can reach this machine reach a device;
+	// a remote forward lets someone who can reach the *device* reach whatever
+	// this machine's network can, which on a shared server is a much larger
+	// set than the person who opened it intended. bkd refuses loopback and
+	// link-local destinations outright for that reason — see
+	// internal/proto/tunnel — but the rest of the network is still reachable,
+	// so the feature is a decision rather than a default.
+	AllowRemoteForwards bool `yaml:"allow_remote_forwards"`
 }
 
 // TunnelsConfig holds the operational settings for port forwarding. The
@@ -312,6 +326,7 @@ func Default() Config {
 			MaxUploadBytes:       1 << 30,  // 1 GiB per request
 			MaxImportBytes:       64 << 20, // 64 MiB
 			AllowTCPTunnels:      false,
+			AllowRemoteForwards:  false,
 		},
 		Tunnels: TunnelsConfig{
 			Bind:        "127.0.0.1",

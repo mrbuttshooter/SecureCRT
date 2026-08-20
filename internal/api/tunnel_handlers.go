@@ -46,6 +46,11 @@ type openTunnelRequest struct {
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
 
+	// RemoteBind and RemotePort are where a remote tunnel asks the device to
+	// listen. A zero port means the device picks one and reports it back.
+	RemoteBind string `json:"remote_bind"`
+	RemotePort int    `json:"remote_port"`
+
 	// AcceptHostKey answers a fingerprint prompt on a second attempt, the
 	// same two-step the file browser uses: there is no socket here to ask
 	// over, so the first attempt refuses and reports what it saw.
@@ -81,14 +86,16 @@ func (a *API) handleOpenTunnel(w http.ResponseWriter, r *http.Request) {
 	prompter := &fingerprintPrompter{accept: req.AcceptHostKey}
 
 	t, err := a.tunnels.Open(r.Context(), tunnel.OpenParams{
-		UserID:    u.ID,
-		SessionID: req.SessionID,
-		Kind:      kind,
-		Label:     req.Label,
-		Host:      req.Host,
-		Port:      req.Port,
-		VaultKey:  key,
-		Prompter:  prompter,
+		UserID:     u.ID,
+		SessionID:  req.SessionID,
+		Kind:       kind,
+		Label:      req.Label,
+		Host:       req.Host,
+		Port:       req.Port,
+		RemoteBind: req.RemoteBind,
+		RemotePort: req.RemotePort,
+		VaultKey:   key,
+		Prompter:   prompter,
 	})
 	if err != nil {
 		a.recordTunnelRefusal(r, u, req, err)
@@ -97,10 +104,16 @@ func (a *API) handleOpenTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	action := audit.ActionTunnelOpened
-	if kind.NeedsListener() {
+	switch {
+	case kind.NeedsListener():
 		// Raised because a listener is reachable by anyone who can reach this
 		// host, with no account here at all.
 		action = audit.ActionTunnelListener
+	case kind.ListensRemotely():
+		// Raised higher still: this one lets a device reach into this
+		// server's network, so it is the event an operator most wants to find
+		// afterwards.
+		action = audit.ActionTunnelRemote
 	}
 
 	info := t.Info(a.tunnels.URLFor)
@@ -111,6 +124,9 @@ func (a *API) handleOpenTunnel(w http.ResponseWriter, r *http.Request) {
 			"kind": string(kind), "session": req.SessionID,
 			"listen": info.Listen, "remote": info.Remote,
 			"via_hops": len(info.Via),
+			// The bind the device was asked for, which is not always what it
+			// gave: an operator reading this afterwards wants both.
+			"remote_bind": req.RemoteBind,
 		},
 	})
 	_ = sess
@@ -155,6 +171,7 @@ func (a *API) handleTunnelConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.log, http.StatusOK, map[string]any{
 		"web_enabled":       a.tunnels.WebTunnelsEnabled(),
 		"listeners_enabled": a.tunnels.ListenersEnabled(),
+		"remote_enabled":    a.tunnels.RemoteForwardsEnabled(),
 		"domain":            a.tunnels.Domain(),
 	})
 }
@@ -162,7 +179,12 @@ func (a *API) handleTunnelConfig(w http.ResponseWriter, r *http.Request) {
 // recordTunnelRefusal logs a refusal that was the policy's doing rather than
 // a mistake, so an operator can see the feature being asked for.
 func (a *API) recordTunnelRefusal(r *http.Request, u users.User, req openTunnelRequest, err error) {
-	if !errors.Is(err, tunnel.ErrListenersOff) && !errors.Is(err, tunnel.ErrWebTunnelsOff) {
+	switch {
+	case errors.Is(err, tunnel.ErrListenersOff),
+		errors.Is(err, tunnel.ErrWebTunnelsOff),
+		errors.Is(err, tunnel.ErrRemoteOff),
+		errors.Is(err, tunnel.ErrDestinationOff):
+	default:
 		return
 	}
 	a.audit.Record(r.Context(), audit.Event{
@@ -190,6 +212,26 @@ func (a *API) writeTunnelError(
 		writeError(w, a.log, http.StatusForbidden, CodeForbidden,
 			"Opening a port on this server is disabled here. An administrator can "+
 				"enable it with policy.allow_tcp_tunnels.")
+
+	case errors.Is(err, tunnel.ErrRemoteOff):
+		writeError(w, a.log, http.StatusForbidden, CodeForbidden,
+			"Asking a device to listen on this server's behalf is disabled here. "+
+				"An administrator can enable it with policy.allow_remote_forwards.")
+
+	case errors.Is(err, tunnel.ErrDestinationOff):
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest,
+			"A remote forward may not reach that address. This server refuses "+
+				"loopback and link-local destinations, because they are its own "+
+				"interior and its cloud provider's credential service. Name an "+
+				"address on the network you meant to reach instead.")
+
+	case errors.Is(err, tunnel.ErrRemoteBind):
+		// 502 rather than 409: this is the far end refusing, and 409 is
+		// already how a host key prompt comes back on this endpoint.
+		writeError(w, a.log, http.StatusBadGateway, CodeRemoteRefused,
+			"The device refused to listen. Its own SSH configuration decides "+
+				"that: AllowTcpForwarding must be on, and binding anything but "+
+				"loopback also needs GatewayPorts. The port may simply be taken.")
 
 	case errors.Is(err, tunnel.ErrWebTunnelsOff):
 		writeError(w, a.log, http.StatusServiceUnavailable, CodeForbidden,

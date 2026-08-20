@@ -129,16 +129,7 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 	fileSessions := files.NewManager(dialer, quiet)
 	transfers := files.NewTransfers(fileSessions, quiet)
 
-	portLow, portHigh, _ := config.ParsePortRange(cfg.Tunnels.PortRange)
-	tunnels := tunnel.NewManager(tunnel.Config{
-		AllowListeners: cfg.Policy.AllowTCPTunnels,
-		Bind:           cfg.Tunnels.Bind,
-		PortLow:        portLow,
-		PortHigh:       portHigh,
-		Domain:         cfg.Tunnels.Domain,
-		MaxPerUser:     cfg.Tunnels.MaxPerUser,
-		IdleTimeout:    cfg.Tunnels.IdleTimeout,
-	}, dialer, quiet)
+	tunnels := tunnel.NewManager(tunnel.ConfigFrom(cfg), dialer, quiet)
 	t.Cleanup(tunnels.Shutdown)
 	t.Cleanup(func() {
 		transfers.Shutdown()

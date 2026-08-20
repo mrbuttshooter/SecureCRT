@@ -84,6 +84,7 @@ const (
 	ActionTunnelClosed   Action = "tunnel.closed"
 	ActionTunnelRefused  Action = "tunnel.refused"
 	ActionTunnelListener Action = "tunnel.listener.opened"
+	ActionTunnelRemote   Action = "tunnel.remote.opened"
 	ActionAgentForwarded Action = "agent.forwarded"
 
 	// Files. Reads and writes against a managed host are recorded because
@@ -157,6 +158,12 @@ var minimumSeverity = map[Action]Severity{
 	// host, account or no account — worth finding in a log without having
 	// known to look for it.
 	ActionTunnelListener: SeverityNotice,
+
+	// A remote forward is the one tunnel that lets traffic in rather than
+	// out. Whoever reaches that port on the device reaches this server's
+	// network, so the record of it opening must survive whatever retention
+	// an operator sets for ordinary activity.
+	ActionTunnelRemote: SeverityNotice,
 
 	// Forwarded keys can be used by the far host for as long as the session
 	// lasts. That is the point of agent forwarding and also its whole risk.

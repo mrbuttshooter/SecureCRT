@@ -170,6 +170,18 @@ policy:
   # browser's SOCKS setting at a host only this server can see.
   allow_tcp_tunnels: false
 
+  # Remote forwarding: `ssh -R`. The device listens, and a connection arriving
+  # there is carried back and dialled *from this server*.
+  #
+  # Off by default for a different reason than the setting above. That one
+  # lets whoever can reach this machine reach a device. This one lets whoever
+  # can reach the *device* reach whatever this machine's network can — which,
+  # on a server shared by a whole team, is a great deal more than the person
+  # who opened the tunnel had in mind. bkd refuses loopback and link-local
+  # destinations outright, so its own API, its database socket and any cloud
+  # metadata service stay out of reach; the rest of the network does not.
+  allow_remote_forwards: false
+
 tunnels:
   # Where forwarded ports listen. Loopback makes the feature useless from
   # anywhere but this machine, which is the safe default; widening it is a

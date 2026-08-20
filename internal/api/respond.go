@@ -37,6 +37,12 @@ const (
 	CodeInvalidCode     ErrorCode = "invalid_code"
 	CodeSSODisabled     ErrorCode = "sso_disabled"
 	CodePasswordAuthOff ErrorCode = "password_auth_disabled"
+
+	// CodeRemoteRefused is the far end saying no, rather than this server.
+	// Distinct from CodeForbidden because the two send a person to different
+	// places: one to their administrator here, the other to the device's own
+	// sshd configuration.
+	CodeRemoteRefused ErrorCode = "remote_refused"
 )
 
 // errorBody is the shape of every error response.

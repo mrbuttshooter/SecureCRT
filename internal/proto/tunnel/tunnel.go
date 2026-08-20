@@ -11,6 +11,11 @@
 //     connections, so it is off unless an operator turns it on.
 //   - A SOCKS tunnel is the same listener with a handshake in front, reaching
 //     wherever the client asks rather than one fixed address.
+//   - A remote tunnel is the one shape that survives the move to a browser
+//     unchanged: the *device* listens, and a connection arriving there is
+//     carried back and dialled from this server. Nothing is opened here — but
+//     what it exposes is this server's network rather than one host, which is
+//     why it has a gate of its own and a destination guard. See forward.go.
 //
 // What a browser cannot do is listen, which is why "local forwarding" here
 // means something different from the same words in OpenSSH. `ssh -L` opens a
@@ -44,12 +49,16 @@ const (
 
 	// KindSOCKS listens on this server and forwards wherever asked.
 	KindSOCKS Kind = "socks"
+
+	// KindRemote asks the far end to listen, and dials what arrives from
+	// here. `ssh -R`, with the same meaning it has in OpenSSH.
+	KindRemote Kind = "remote"
 )
 
 // Validate reports whether the kind is one this package implements.
 func (k Kind) Validate() error {
 	switch k {
-	case KindWeb, KindLocal, KindSOCKS:
+	case KindWeb, KindLocal, KindSOCKS, KindRemote:
 		return nil
 	default:
 		return fmt.Errorf("tunnel: %q is not a kind of tunnel", k)
@@ -57,7 +66,14 @@ func (k Kind) Validate() error {
 }
 
 // NeedsListener reports whether this kind opens a port on this server.
+//
+// KindRemote does not, and the distinction is the point: it opens one on the
+// device instead, which is a different permission with a different blast
+// radius. ListensRemotely is the other half.
 func (k Kind) NeedsListener() bool { return k == KindLocal || k == KindSOCKS }
+
+// ListensRemotely reports whether this kind asks the far end to listen.
+func (k Kind) ListensRemotely() bool { return k == KindRemote }
 
 // State is where a tunnel is in its life.
 type State string
@@ -73,6 +89,9 @@ var (
 	ErrNotFound        = errors.New("tunnel: no such tunnel")
 	ErrTooManyTunnels  = errors.New("tunnel: too many tunnels open")
 	ErrListenersOff    = errors.New("tunnel: opening ports on this server is disabled")
+	ErrRemoteOff       = errors.New("tunnel: remote forwarding is disabled")
+	ErrRemoteBind      = errors.New("tunnel: the remote host refused to listen")
+	ErrDestinationOff  = errors.New("tunnel: that destination may not be reached from this server")
 	ErrWebTunnelsOff   = errors.New("tunnel: web tunnels need a domain configured")
 	ErrNoPortAvailable = errors.New("tunnel: no port is free in the configured range")
 	ErrManagerClosed   = errors.New("tunnel: the server is shutting down")
@@ -87,9 +106,18 @@ type Tunnel struct {
 	Label     string
 
 	// Host and Port are what a local tunnel forwards to. Unused by SOCKS,
-	// which is told per connection.
+	// which is told per connection. For a remote tunnel they are the
+	// destination dialled *from this server* for each connection the device
+	// accepts — the same direction reversal `ssh -R` has.
 	Host string
 	Port int
+
+	// RemoteBind and RemotePort are where a remote tunnel asks the device to
+	// listen. An empty bind means whatever the device's own configuration
+	// defaults to, which for OpenSSH is loopback unless GatewayPorts says
+	// otherwise; a zero port means the device chooses one and tells us.
+	RemoteBind string
+	RemotePort int
 
 	// Via records the jump hosts the connection underneath went through, so
 	// the interface can say a tunnel reaches a device behind a bastion.
@@ -118,8 +146,17 @@ type Tunnel struct {
 	failure  string
 
 	// listenAddr is what the listener actually bound, which is not always
-	// what was asked for — port 0 means "anything free".
+	// what was asked for — port 0 means "anything free", on either side.
 	listenAddr string
+
+	// localPort is the port taken from the configured range, and zero for
+	// every kind that did not take one.
+	//
+	// Recorded rather than read back off the listener, because a remote
+	// tunnel's listener reports a port on the *device*: giving that number to
+	// releasePort would free a port in our range that some other tunnel is
+	// legitimately holding, whenever the two happened to coincide.
+	localPort int
 }
 
 // Info is the snapshot handed to the interface.
@@ -134,7 +171,8 @@ type Info struct {
 	// Listen is the address to point a client at, for the kinds that have one.
 	Listen string `json:"listen,omitempty"`
 
-	// Remote is what a local tunnel forwards to.
+	// Remote is the fixed address at the other end of the forwarding: what a
+	// local tunnel reaches over SSH, and what a remote tunnel dials from here.
 	Remote string `json:"remote,omitempty"`
 
 	// URL is where a web tunnel is served.
@@ -175,7 +213,7 @@ func (t *Tunnel) Info(urlFor func(*Tunnel) string) Info {
 		LastUsedAt:  lastUsed,
 		Error:       failure,
 	}
-	if t.Kind == KindLocal {
+	if t.Kind == KindLocal || t.Kind == KindRemote {
 		out.Remote = net.JoinHostPort(t.Host, fmt.Sprint(t.Port))
 	}
 	if urlFor != nil {
