@@ -172,7 +172,7 @@ func newFixture(t *testing.T) *fixture {
 	dialer := remote.NewDialer(pool, sessStore, credStore, hkStore, quietLogger())
 
 	return &fixture{
-		connector: NewConnector(manager, dialer, quietLogger()),
+		connector: NewConnector(manager, dialer, Policy{AllowTelnet: true}, quietLogger()),
 		pool:      pool,
 		manager:   manager,
 		sessions:  sessStore,

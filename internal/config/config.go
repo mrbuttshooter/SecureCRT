@@ -230,6 +230,22 @@ type PolicyConfig struct {
 	// internal/proto/tunnel — but the rest of the network is still reachable,
 	// so the feature is a decision rather than a default.
 	AllowRemoteForwards bool `yaml:"allow_remote_forwards"`
+
+	// AllowTelnet permits telnet connections.
+	//
+	// On by default, which is a deliberate choice and not an oversight.
+	// Telnet is plaintext — the password crosses the network in the clear,
+	// and so does everything typed after it — but the equipment that needs it
+	// is equipment that cannot do anything else: console servers, older
+	// switches, PDUs, anything whose management plane predates its owner's
+	// security policy. Refusing it does not make those devices go away; it
+	// makes people reach them with a tool that has no audit log.
+	//
+	// So the cost is made visible instead: the tab is marked, and every
+	// connection is recorded with encrypted=false. An organisation that has
+	// finished retiring its telnet estate turns this off and finds out
+	// immediately who had not noticed.
+	AllowTelnet bool `yaml:"allow_telnet"`
 }
 
 // TunnelsConfig holds the operational settings for port forwarding. The
@@ -327,6 +343,7 @@ func Default() Config {
 			MaxImportBytes:       64 << 20, // 64 MiB
 			AllowTCPTunnels:      false,
 			AllowRemoteForwards:  false,
+			AllowTelnet:          true,
 		},
 		Tunnels: TunnelsConfig{
 			Bind:        "127.0.0.1",
@@ -409,6 +426,7 @@ func applyEnv(cfg *Config) {
 	bl("OIDC_AUTO_PROVISION", &cfg.Auth.OIDC.AutoProvision)
 	bl("ALLOW_PLAINTEXT_EXPORT", &cfg.Policy.AllowPlaintextExport)
 	bl("ALLOW_PASSWORD_AUTH", &cfg.Policy.AllowPasswordAuth)
+	bl("ALLOW_TELNET", &cfg.Policy.AllowTelnet)
 	bl("REQUIRE_HOST_KEY_VERIFY", &cfg.Policy.RequireHostKeyVerify)
 	bl("RECORD_ALL_SESSIONS", &cfg.Policy.RecordAllSessions)
 }

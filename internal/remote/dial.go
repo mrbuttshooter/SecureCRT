@@ -66,6 +66,12 @@ const (
 	CodeJumpChain = "jump_chain_invalid"
 
 	// CodeInternal is anything else.
+	// CodeProtocolDisabled is an operator's decision rather than a fault:
+	// the connection is fine, this server has been told not to make it.
+	// Distinct from CodeInternal because it sends a person to their
+	// administrator rather than to a bug report.
+	CodeProtocolDisabled = "protocol_disabled"
+
 	CodeInternal = "internal_error"
 )
 

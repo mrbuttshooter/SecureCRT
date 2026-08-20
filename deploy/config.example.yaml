@@ -182,6 +182,20 @@ policy:
   # metadata service stay out of reach; the rest of the network does not.
   allow_remote_forwards: false
 
+  # Telnet. On by default, and that is a decision rather than an oversight.
+  #
+  # Telnet is plaintext: the password crosses the network in the clear, and so
+  # does everything typed after it. But the equipment that needs it cannot do
+  # anything else — console servers, older switches, PDUs, anything whose
+  # management plane predates its owner's security policy — and refusing it
+  # does not make those devices go away. It makes people reach them with
+  # something that has no audit log.
+  #
+  # The cost is made visible instead: the tab is marked, and every connection
+  # is recorded with encrypted=false. Turn this off once the telnet estate is
+  # retired, and find out immediately who had not noticed.
+  allow_telnet: true
+
 tunnels:
   # Where forwarded ports listen. Loopback makes the feature useless from
   # anywhere but this machine, which is the safe default; widening it is a

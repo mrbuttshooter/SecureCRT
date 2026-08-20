@@ -2,10 +2,14 @@ package terminal
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/mrbuttshooter/securecrt/internal/proto/sshx"
+	"github.com/mrbuttshooter/securecrt/internal/proto/telnetx"
 
 	"github.com/mrbuttshooter/securecrt/internal/remote"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
@@ -34,19 +38,26 @@ type (
 // ChangedKeyInfo builds the detail for a changed-key report.
 var ChangedKeyInfo = remote.ChangedKeyInfo
 
+// Policy is what an operator has allowed.
+type Policy struct {
+	// AllowTelnet permits plaintext telnet connections.
+	AllowTelnet bool
+}
+
 // Connector opens terminals for saved connections.
 type Connector struct {
 	manager *Manager
 	dialer  *remote.Dialer
+	policy  Policy
 	log     *slog.Logger
 }
 
 // NewConnector builds a Connector.
-func NewConnector(manager *Manager, dialer *remote.Dialer, log *slog.Logger) *Connector {
+func NewConnector(manager *Manager, dialer *remote.Dialer, policy Policy, log *slog.Logger) *Connector {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Connector{manager: manager, dialer: dialer, log: log}
+	return &Connector{manager: manager, dialer: dialer, policy: policy, log: log}
 }
 
 // ConnectParams describes a terminal to open.
@@ -71,10 +82,37 @@ type ConnectParams struct {
 
 // Connect opens a terminal for a saved connection.
 //
-// The SSH connection may already exist — the same user browsing the same
-// host's files, or a second terminal on it — in which case this opens another
-// channel on it rather than dialling again.
+// Branches on the protocol here rather than behind one dialler, because the
+// three have almost nothing in common on the way in. SSH consults the
+// connection pool, verifies a host key and may traverse a chain of jump
+// hosts. Telnet opens one socket per terminal — it multiplexes nothing, so
+// sharing a connection between two tabs would interleave two people's
+// keystrokes into one byte stream. Serial claims a device exclusively.
+//
+// What they share begins once bytes are flowing, which is where Manager.Open
+// takes over.
 func (c *Connector) Connect(ctx context.Context, p ConnectParams) (*Terminal, error) {
+	resolved, err := c.dialer.Resolve(ctx, p.UserID, p.SessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	switch resolved.Protocol {
+	case sessions.ProtocolSSH:
+		return c.connectSSH(ctx, p)
+	case sessions.ProtocolTelnet:
+		return c.connectTelnet(ctx, p, resolved)
+	default:
+		return nil, &ConnectError{
+			Code: remote.CodeInternal,
+			Message: fmt.Sprintf("%s connections are not supported yet.",
+				resolved.Protocol),
+		}
+	}
+}
+
+// connectSSH is the original path, unchanged.
+func (c *Connector) connectSSH(ctx context.Context, p ConnectParams) (*Terminal, error) {
 	conn, err := c.dialer.Acquire(ctx, remote.Params{
 		UserID:    p.UserID,
 		SessionID: p.SessionID,
@@ -133,6 +171,85 @@ func (c *Connector) Connect(ctx context.Context, p ConnectParams) (*Terminal, er
 			Message: "The remote shell could not be started.",
 			Err:     err,
 		}
+	}
+
+	return term, nil
+}
+
+// connectTelnet opens one telnet session for one terminal.
+//
+// No pool, and that is not a shortcut. Telnet carries exactly one session per
+// TCP connection: there is no channel layer, so two terminals sharing one
+// socket would be two people typing into the same byte stream. Every terminal
+// gets its own connection and closes it on the way out.
+func (c *Connector) connectTelnet(
+	ctx context.Context, p ConnectParams, resolved sessions.Resolved,
+) (*Terminal, error) {
+	if !c.policy.AllowTelnet {
+		return nil, &ConnectError{
+			Code: remote.CodeProtocolDisabled,
+			Message: "Telnet is disabled on this server. It sends everything, " +
+				"including the password, in the clear; an administrator can " +
+				"allow it with policy.allow_telnet.",
+		}
+	}
+
+	cols, rows := p.Cols, p.Rows
+	if cols <= 0 {
+		cols = 80
+	}
+	if rows <= 0 {
+		rows = 24
+	}
+
+	progress := p.Progress
+	if progress == nil {
+		progress = func(string) {}
+	}
+	progress(remote.StatusDialling)
+
+	conn, err := telnetx.Dial(ctx, telnetx.Config{
+		Address: net.JoinHostPort(resolved.Hostname,
+			strconv.Itoa(resolved.EffectivePort)),
+		Cols: cols,
+		Rows: rows,
+	})
+	if err != nil {
+		return nil, &ConnectError{
+			Code: remote.CodeUnreachable,
+			Message: fmt.Sprintf("Could not reach %s over telnet.",
+				remote.Describe(resolved)),
+			Err: err,
+		}
+	}
+
+	progress(remote.StatusConnected)
+
+	term, err := c.manager.Open(conn, nil, OpenParams{
+		UserID:    p.UserID,
+		SessionID: resolved.ID,
+		Label:     resolved.Name,
+		Username:  resolved.EffectiveUsername,
+		Cols:      cols,
+		Rows:      rows,
+		Transport: Transport{
+			Protocol: sessions.ProtocolTelnet,
+			Host:     resolved.Hostname,
+			Port:     resolved.EffectivePort,
+			Detail:   conn.Summary(),
+		},
+	})
+	if err != nil {
+		_ = conn.Close()
+		return nil, &ConnectError{
+			Code:    remote.CodeInternal,
+			Message: "The telnet session could not be started.",
+			Err:     err,
+		}
+	}
+
+	if err := c.dialer.MarkUsed(ctx, resolved.ID); err != nil {
+		c.log.Warn("recording session use", "error", err)
 	}
 
 	return term, nil

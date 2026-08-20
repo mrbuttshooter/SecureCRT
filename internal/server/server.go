@@ -183,7 +183,8 @@ func (s *Server) buildAPI(ctx context.Context) error {
 	dialer := remote.NewDialer(s.connections, sessionTree, credentialStore, hostKeyStore, s.log)
 
 	s.terminals = terminal.NewManager(s.log)
-	connector := terminal.NewConnector(s.terminals, dialer, s.log)
+	connector := terminal.NewConnector(s.terminals, dialer,
+		terminal.Policy{AllowTelnet: s.cfg.Policy.AllowTelnet}, s.log)
 
 	s.fileSessions = files.NewManager(dialer, s.log)
 	s.transfers = files.NewTransfers(s.fileSessions, s.log)
