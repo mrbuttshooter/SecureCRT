@@ -435,7 +435,7 @@ func TestPortRangeConstraint(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		for _, port := range []int{0, -1, 65536, 99999} {
+		for _, port := range []int{-1, 65536, 99999} {
 			_, err := db.Exec(ctx,
 				`INSERT INTO sessions (id, user_id, name, hostname, port, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 				fmt.Sprintf("s-%d", port), "u1", "x", "h", port, ts, ts)
@@ -443,7 +443,11 @@ func TestPortRangeConstraint(t *testing.T) {
 				t.Errorf("port %d must be rejected", port)
 			}
 		}
-		for _, port := range []int{1, 22, 23, 65535} {
+		// Zero is accepted from migration 0003 onward, and means "inherit
+		// from the folder". It is the one value outside 1-65535 that has to
+		// get through, so it is listed with the valid ports rather than
+		// quietly removed from the invalid ones.
+		for _, port := range []int{0, 1, 22, 23, 65535} {
 			_, err := db.Exec(ctx,
 				`INSERT INTO sessions (id, user_id, name, hostname, port, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 				fmt.Sprintf("ok-%d", port), "u1", "x", "h", port, ts, ts)
@@ -598,6 +602,91 @@ func TestEnsureMigrationsTableIsIdempotent(t *testing.T) {
 			if err := EnsureMigrationsTable(ctx, db); err != nil {
 				t.Fatalf("call %d: %v", i+1, err)
 			}
+		}
+	})
+}
+
+// TestTheInheritedPortMigrationCarriesExistingRows exercises 0003 the way an
+// upgrade does: with data already in the table.
+//
+// It is the first migration that rebuilds a table rather than adding a
+// column, so "does it apply cleanly to an empty schema" — which every other
+// test here checks — is the easy half. The half that matters to somebody with
+// three hundred saved connections is whether their rows come out the other
+// side unchanged, and whether the down migration they might reach for after a
+// bad deploy leaves them anything to go back to.
+func TestTheInheritedPortMigrationCarriesExistingRows(t *testing.T) {
+	eachBackend(t, func(t *testing.T, db *DB) {
+		ctx := context.Background()
+		if err := Migrate(ctx, db, quietLogger()); err != nil {
+			t.Fatal(err)
+		}
+
+		const ts = "2026-01-01T00:00:00Z"
+		if _, err := db.Exec(ctx,
+			`INSERT INTO users (id, email, email_normalized, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+			"u1", "a@x", "a@x", ts, ts); err != nil {
+			t.Fatal(err)
+		}
+
+		rows := []struct {
+			id       string
+			protocol string
+			port     int
+		}{
+			{"explicit", "ssh", 2222},
+			{"inherited", "ssh", 0},
+			{"telnet-inherited", "telnet", 0},
+		}
+		for _, r := range rows {
+			if _, err := db.Exec(ctx,
+				`INSERT INTO sessions (id, user_id, name, protocol, hostname, port, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				r.id, "u1", r.id, r.protocol, "h", r.port, ts, ts); err != nil {
+				t.Fatalf("insert %s: %v", r.id, err)
+			}
+		}
+
+		// Down: zero has nowhere to go in the old schema, so it becomes the
+		// protocol's default. Everything else must be untouched.
+		if err := Rollback(ctx, db, quietLogger()); err != nil {
+			t.Fatalf("rollback: %v", err)
+		}
+
+		afterDown := map[string]int{"explicit": 2222, "inherited": 22, "telnet-inherited": 23}
+		for id, want := range afterDown {
+			var got int
+			if err := db.QueryRow(ctx, `SELECT port FROM sessions WHERE id = ?`, id).Scan(&got); err != nil {
+				t.Fatalf("%s vanished in the rollback: %v", id, err)
+			}
+			if got != want {
+				t.Errorf("after rollback %s has port %d, want %d", id, got, want)
+			}
+		}
+
+		// And up again. The rows carry through as they now stand — the
+		// migration deliberately does not rewrite 22 to 0, because that would
+		// re-point every default-port connection at whatever its folder says.
+		if err := Migrate(ctx, db, quietLogger()); err != nil {
+			t.Fatalf("re-migrate: %v", err)
+		}
+		for id, want := range afterDown {
+			var got int
+			if err := db.QueryRow(ctx, `SELECT port FROM sessions WHERE id = ?`, id).Scan(&got); err != nil {
+				t.Fatalf("%s vanished on the way back up: %v", id, err)
+			}
+			if got != want {
+				t.Errorf("after re-migrating %s has port %d, want %d", id, got, want)
+			}
+		}
+
+		// The indexes have to come back too, or the rebuild leaves a table
+		// that works and scans.
+		var indexes int
+		if err := db.QueryRow(ctx,
+			`SELECT COUNT(*) FROM sessions WHERE user_id = ? AND folder_id IS NULL`,
+			"u1").Scan(&indexes); err != nil {
+			t.Fatalf("the rebuilt table is not queryable by its index columns: %v", err)
 		}
 	})
 }

@@ -711,3 +711,62 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+// TestAFolderDefaultPortSurvivesExportToAForeignFormat.
+//
+// ssh_config, PuTTY, SecureCRT and CSV have no concept of a folder default,
+// so a connection that inherits one has to be written with the resolved
+// value. Writing the raw column would export "no port", the reader would fall
+// back to 22, and the migrated connection would reach the wrong service —
+// silently, because 22 is a plausible answer.
+//
+// The .bkbundle is the opposite case and is checked here too: it carries the
+// folders and their defaults, so it must keep the column as it stands.
+// Resolving into the bundle would pin every connection to whatever its folder
+// said on the day of export and break the inheritance the export exists to
+// preserve.
+func TestAFolderDefaultPortSurvivesExportToAForeignFormat(t *testing.T) {
+	source := newInstance(t)
+	ctx := context.Background()
+
+	port := 8022
+	folder, err := source.tree.CreateFolder(ctx, sessions.CreateFolderParams{
+		OwnerID: source.userID, Name: "Out-of-band",
+		Defaults: sessions.Settings{Port: &port},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.tree.CreateSession(ctx, sessions.CreateSessionParams{
+		OwnerID: source.userID, FolderID: folder.ID,
+		Name: "Console server", Hostname: "con1.example.com", Username: "netops",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := source.service.Gather(ctx, source.key,
+		GatherOptions{UserID: source.userID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(payload.Sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(payload.Sessions))
+	}
+	got := payload.Sessions[0]
+	if got.Port != 0 {
+		t.Errorf("the bundle's port = %d, want 0 — the folder default belongs "+
+			"in the folder, not baked into every connection", got.Port)
+	}
+	if got.EffectivePort != 8022 {
+		t.Fatalf("effective port = %d, want the folder's 8022", got.EffectivePort)
+	}
+
+	var out bytes.Buffer
+	if _, err := Export(&out, payload, FormatSSHConfig, ExportOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Port 8022") {
+		t.Errorf("the inherited port did not reach the exported ssh_config:\n%s", out.String())
+	}
+}

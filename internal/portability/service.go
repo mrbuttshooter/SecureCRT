@@ -85,18 +85,26 @@ func (s *Service) Gather(ctx context.Context, key vault.Key, opts GatherOptions)
 		if err != nil {
 			return Payload{}, err
 		}
+		// Resolved from the tree already loaded, so the formats with no
+		// concept of a folder default still get the port the connection
+		// actually dials.
+		resolved, err := tree.Resolve(session)
+		if err != nil {
+			return Payload{}, fmt.Errorf("portability: resolve %q: %w", session.Name, err)
+		}
 		payload.Sessions = append(payload.Sessions, Session{
-			ID:           session.ID,
-			FolderID:     session.FolderID,
-			Name:         session.Name,
-			Protocol:     string(session.Protocol),
-			Hostname:     session.Hostname,
-			Port:         session.Port,
-			Username:     session.Username,
-			CredentialID: session.CredentialID,
-			JumpChain:    session.JumpChain,
-			Settings:     settings,
-			SortOrder:    session.SortOrder,
+			ID:            session.ID,
+			FolderID:      session.FolderID,
+			Name:          session.Name,
+			Protocol:      string(session.Protocol),
+			Hostname:      session.Hostname,
+			Port:          session.Port,
+			EffectivePort: resolved.EffectivePort,
+			Username:      session.Username,
+			CredentialID:  session.CredentialID,
+			JumpChain:     session.JumpChain,
+			Settings:      settings,
+			SortOrder:     session.SortOrder,
 		})
 	}
 

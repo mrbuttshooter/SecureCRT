@@ -231,8 +231,11 @@ func exportSSHConfig(w io.Writer, payload Payload) (ExportResult, error) {
 				return result, err
 			}
 		}
-		if session.Port > 0 && session.Port != 22 {
-			if _, err := fmt.Fprintf(w, "    Port %d\n", session.Port); err != nil {
+		// The effective port, not the column: ssh_config has no folder
+		// defaults, so a connection inheriting 8022 has to be written as 8022
+		// or the exported file reaches the wrong port.
+		if port := session.DialPort(); port > 0 && port != 22 {
+			if _, err := fmt.Fprintf(w, "    Port %d\n", port); err != nil {
 				return result, err
 			}
 		}
@@ -401,12 +404,12 @@ func exportSecureCRT(w io.Writer, payload Payload, opts ExportOptions) (ExportRe
 				return result, err
 			}
 		}
-		if session.Port > 0 {
+		if port := session.DialPort(); port > 0 {
 			key := "[SSH2] Port"
 			if session.Protocol == "telnet" {
 				key = "[TELNET] Port"
 			}
-			if _, err := fmt.Fprintf(w, "D:\"%s\"=%08x\n", key, session.Port); err != nil {
+			if _, err := fmt.Fprintf(w, "D:\"%s\"=%08x\n", key, port); err != nil {
 				return result, err
 			}
 		}
@@ -484,7 +487,7 @@ func exportPuTTY(w io.Writer, payload Payload) (ExportResult, error) {
 			protocol = "telnet"
 		}
 
-		port := session.Port
+		port := session.DialPort()
 		if port == 0 {
 			port = 22
 			if protocol == "telnet" {
@@ -586,8 +589,8 @@ func exportCSV(w io.Writer, payload Payload, opts ExportOptions) (ExportResult, 
 		cred := credentials[session.CredentialID]
 
 		port := ""
-		if session.Port > 0 {
-			port = fmt.Sprint(session.Port)
+		if session.DialPort() > 0 {
+			port = fmt.Sprint(session.DialPort())
 		}
 
 		record := []string{

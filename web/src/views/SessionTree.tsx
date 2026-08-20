@@ -104,7 +104,7 @@ export function SessionTree(props: SessionTreeProps) {
         aria-label={s.name}
         onClick={() => props.onSelect(s)}
         onDoubleClick={() => props.onOpen(s)}
-        title={`${s.username ? s.username + '@' : ''}${s.hostname}:${s.port}`}
+        title={`${s.username ? s.username + '@' : ''}${s.hostname}:${s.effective_port}`}
       >
         <span className="tree-icon" aria-hidden="true">
           {props.liveSessionIds.has(s.id) ? '●' : '○'}

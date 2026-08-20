@@ -31,21 +31,29 @@ func folderView(f sessions.Folder) map[string]any {
 // Built by hand rather than serialising the domain type, for the same reason
 // as credentials: adding a field internally must never silently start
 // publishing it.
-func savedSessionView(s sessions.Session) map[string]any {
+// effectivePort is what the connection will actually dial.
+//
+// Carried alongside the raw column because the two say different things and
+// the interface needs both: `port` is what the user typed, where zero means
+// "inherit" and the field renders blank, while `effective_port` is what that
+// inheritance resolved to. Showing the raw column in a host:port label would
+// print ":0" for every connection taking its folder's default.
+func savedSessionView(s sessions.Session, effectivePort int) map[string]any {
 	view := map[string]any{
-		"id":            s.ID,
-		"folder_id":     s.FolderID,
-		"name":          s.Name,
-		"protocol":      string(s.Protocol),
-		"hostname":      s.Hostname,
-		"port":          s.Port,
-		"username":      s.Username,
-		"credential_id": s.CredentialID,
-		"jump_chain":    s.JumpChain,
-		"settings":      s.Settings,
-		"sort_order":    s.SortOrder,
-		"created_at":    s.CreatedAt.Format(time.RFC3339),
-		"updated_at":    s.UpdatedAt.Format(time.RFC3339),
+		"effective_port": effectivePort,
+		"id":             s.ID,
+		"folder_id":      s.FolderID,
+		"name":           s.Name,
+		"protocol":       string(s.Protocol),
+		"hostname":       s.Hostname,
+		"port":           s.Port,
+		"username":       s.Username,
+		"credential_id":  s.CredentialID,
+		"jump_chain":     s.JumpChain,
+		"settings":       s.Settings,
+		"sort_order":     s.SortOrder,
+		"created_at":     s.CreatedAt.Format(time.RFC3339),
+		"updated_at":     s.UpdatedAt.Format(time.RFC3339),
 	}
 	if s.LastUsedAt != nil {
 		view["last_used_at"] = s.LastUsedAt.Format(time.RFC3339)
@@ -72,7 +80,15 @@ func (a *API) handleGetTree(w http.ResponseWriter, r *http.Request) {
 	}
 	saved := make([]map[string]any, 0, len(tree.Sessions))
 	for _, s := range tree.Sessions {
-		saved = append(saved, savedSessionView(s))
+		// Resolved against the tree already in hand rather than one query per
+		// folder per session, which for a few hundred devices is the
+		// difference between a response and a stall.
+		resolved, err := tree.Resolve(s)
+		if err != nil {
+			writeInternal(w, a.log, "resolving a saved connection", err)
+			return
+		}
+		saved = append(saved, savedSessionView(s, resolved.EffectivePort))
 	}
 
 	writeJSON(w, a.log, http.StatusOK, map[string]any{
@@ -264,7 +280,7 @@ func (a *API) handleCreateSavedSession(w http.ResponseWriter, r *http.Request) {
 		Detail: map[string]any{"hostname": created.Hostname, "port": created.Port},
 	})
 
-	writeJSON(w, a.log, http.StatusCreated, savedSessionView(created))
+	writeJSON(w, a.log, http.StatusCreated, savedSessionView(created, a.effectivePort(r, u.ID, created)))
 }
 
 func (a *API) handleUpdateSavedSession(w http.ResponseWriter, r *http.Request) {
@@ -314,7 +330,7 @@ func (a *API) handleUpdateSavedSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, a.log, http.StatusOK, savedSessionView(updated))
+	writeJSON(w, a.log, http.StatusOK, savedSessionView(updated, a.effectivePort(r, u.ID, updated)))
 }
 
 func (a *API) handleDeleteSavedSession(w http.ResponseWriter, r *http.Request) {
@@ -363,7 +379,7 @@ func (a *API) handleResolveSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	view := savedSessionView(resolved.Session)
+	view := savedSessionView(resolved.Session, resolved.EffectivePort)
 	view["effective"] = map[string]any{
 		"username":      resolved.EffectiveUsername,
 		"port":          resolved.EffectivePort,
@@ -477,6 +493,23 @@ func isTreeValidationError(err error) bool {
 		}
 	}
 	return false
+}
+
+// effectivePort resolves one session's port for a response.
+//
+// A failure falls back to the protocol default rather than failing the
+// request: the write succeeded, and refusing to describe it because a folder
+// could not be read would turn a display problem into a lost edit.
+func (a *API) effectivePort(r *http.Request, userID string, s sessions.Session) int {
+	resolved, err := a.sessionTree.Resolve(r.Context(), userID, s.ID)
+	if err != nil {
+		a.log.Warn("resolving a saved connection for its response", "error", err)
+		if s.Port != 0 {
+			return s.Port
+		}
+		return s.Protocol.DefaultPort()
+	}
+	return resolved.EffectivePort
 }
 
 // checkAgentKeys validates the agent-forwarding setting at write time.

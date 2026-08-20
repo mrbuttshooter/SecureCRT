@@ -236,6 +236,31 @@ administrator ever handles their passphrase.
 
 ---
 
+## Folder defaults
+
+A folder can carry a username, a port and a credential that everything inside
+it inherits. Leave the field blank on a connection and it takes the folder's;
+set it and the connection wins. Change the folder later and every connection
+still inheriting follows it.
+
+This is what makes a tree of three hundred switches manageable: the username
+and the key are set once, on the folder, and a connection is a name and an
+address.
+
+**Exports resolve it, except the bundle.** `ssh_config`, PuTTY, SecureCRT and
+CSV have no concept of a folder default, so a connection inheriting port 8022
+is written as 8022 — the file has to reach the right service. A `.bkbundle`
+carries the folders and their defaults instead, so restoring one reproduces
+the inheritance rather than pinning every connection to whatever its folder
+said on the day it was exported.
+
+> **If you have used bkd before this version:** the port field on a folder had
+> no effect until now. Connections created earlier all carry an explicit port,
+> whether or not anybody typed one, and the upgrade deliberately leaves them
+> alone — rewriting them would re-point every connection at whatever its
+> folder happens to say. Clear the port on a connection to have it start
+> inheriting.
+
 ## Exporting
 
 ### The encrypted bundle

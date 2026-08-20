@@ -49,8 +49,17 @@ func TestCreateAndGetSession(t *testing.T) {
 	if created.Protocol != ProtocolSSH {
 		t.Errorf("protocol = %q, want ssh by default", created.Protocol)
 	}
-	if created.Port != 22 {
-		t.Errorf("port = %d, want 22 by default", created.Port)
+	// Stored as zero, meaning "inherit". The default arrives at Resolve, not
+	// at write time — which is what makes a folder's default port reachable.
+	if created.Port != 0 {
+		t.Errorf("port = %d, want 0 (inherited) when none was given", created.Port)
+	}
+	resolved, err := s.Resolve(ctx, userID, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.EffectivePort != 22 {
+		t.Errorf("effective port = %d, want the SSH default", resolved.EffectivePort)
 	}
 
 	got, err := s.GetSession(ctx, userID, created.ID)
@@ -75,8 +84,164 @@ func TestTelnetGetsItsOwnDefaultPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Port != 23 {
-		t.Errorf("port = %d, want 23 for telnet", created.Port)
+	resolved, err := s.Resolve(ctx, userID, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.EffectivePort != 23 {
+		t.Errorf("effective port = %d, want 23 for telnet", resolved.EffectivePort)
+	}
+}
+
+// TestAFoldersDefaultPortIsUsed is the bug this fixes, stated plainly.
+//
+// The setting existed from migration 0001, the interface offered it, the
+// importers wrote it — and it had no effect on any connection for three
+// phases, because CreateSession filled the column in with the protocol's
+// default before storing and Resolve's fallback was therefore unreachable.
+func TestAFoldersDefaultPortIsUsed(t *testing.T) {
+	s, _, userID := fixture(t)
+	ctx := context.Background()
+
+	port := 8022
+	folder, err := s.CreateFolder(ctx, CreateFolderParams{
+		OwnerID: userID, Name: "Out-of-band",
+		Defaults: Settings{Port: &port},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inheriting, err := s.CreateSession(ctx, CreateSessionParams{
+		OwnerID: userID, FolderID: folder.ID, Name: "Console", Hostname: "con1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := s.Resolve(ctx, userID, inheriting.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.EffectivePort != 8022 {
+		t.Fatalf("effective port = %d, want the folder's 8022", resolved.EffectivePort)
+	}
+
+	// And an explicit port still wins over the folder, which is the half that
+	// must not regress while fixing the other.
+	explicit, err := s.CreateSession(ctx, CreateSessionParams{
+		OwnerID: userID, FolderID: folder.ID, Name: "Switch", Hostname: "sw1", Port: 2222,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err = s.Resolve(ctx, userID, explicit.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.EffectivePort != 2222 {
+		t.Errorf("effective port = %d, want the connection's own 2222", resolved.EffectivePort)
+	}
+}
+
+// TestClearingAPortRestoresInheritance: zero on update means the same as
+// zero on create, or the field could be set and never unset.
+func TestClearingAPortRestoresInheritance(t *testing.T) {
+	s, _, userID := fixture(t)
+	ctx := context.Background()
+
+	port := 8022
+	folder, err := s.CreateFolder(ctx, CreateFolderParams{
+		OwnerID: userID, Name: "Out-of-band", Defaults: Settings{Port: &port},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.CreateSession(ctx, CreateSessionParams{
+		OwnerID: userID, FolderID: folder.ID, Name: "Console", Hostname: "con1", Port: 2222,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	zero := 0
+	if _, err := s.UpdateSession(ctx, userID, created.ID,
+		UpdateSessionParams{Port: &zero}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := s.Resolve(ctx, userID, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.EffectivePort != 8022 {
+		t.Errorf("effective port = %d, want the folder's 8022 after clearing", resolved.EffectivePort)
+	}
+}
+
+// TestResolvingFromATreeAgreesWithResolvingOneAtATime.
+//
+// Two callers need inheritance for every session at once — the tree endpoint
+// and export — and doing that through the query-per-folder path would be
+// thousands of round trips. Both go through the same rules underneath; this
+// is the test that says so, because the way two implementations drift is that
+// one keeps working and the other quietly stops.
+func TestResolvingFromATreeAgreesWithResolvingOneAtATime(t *testing.T) {
+	s, _, userID := fixture(t)
+	ctx := context.Background()
+
+	outerPort := 8022
+	outer, err := s.CreateFolder(ctx, CreateFolderParams{
+		OwnerID: userID, Name: "Site", Defaults: Settings{Port: &outerPort},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	username := "netops"
+	inner, err := s.CreateFolder(ctx, CreateFolderParams{
+		OwnerID: userID, ParentID: outer.ID, Name: "Rack 3",
+		Defaults: Settings{Username: &username},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, spec := range []CreateSessionParams{
+		{OwnerID: userID, FolderID: inner.ID, Name: "Inherits both", Hostname: "a"},
+		{OwnerID: userID, FolderID: inner.ID, Name: "Own port", Hostname: "b", Port: 2222},
+		{OwnerID: userID, FolderID: outer.ID, Name: "One level up", Hostname: "c"},
+		{OwnerID: userID, Name: "No folder at all", Hostname: "d"},
+	} {
+		if _, err := s.CreateSession(ctx, spec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tree, err := s.LoadTree(ctx, userID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, sess := range tree.Sessions {
+		fromTree, err := tree.Resolve(sess)
+		if err != nil {
+			t.Fatalf("%s: %v", sess.Name, err)
+		}
+		fromStore, err := s.Resolve(ctx, userID, sess.ID)
+		if err != nil {
+			t.Fatalf("%s: %v", sess.Name, err)
+		}
+		if fromTree.EffectivePort != fromStore.EffectivePort {
+			t.Errorf("%s: port %d from the tree, %d from the store",
+				sess.Name, fromTree.EffectivePort, fromStore.EffectivePort)
+		}
+		if fromTree.EffectiveUsername != fromStore.EffectiveUsername {
+			t.Errorf("%s: username %q from the tree, %q from the store",
+				sess.Name, fromTree.EffectiveUsername, fromStore.EffectiveUsername)
+		}
+		if fromTree.EffectiveCredentialID != fromStore.EffectiveCredentialID {
+			t.Errorf("%s: credential differs between the two paths", sess.Name)
+		}
 	}
 }
 

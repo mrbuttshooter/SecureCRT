@@ -598,8 +598,14 @@ func TestSessionTreeCRUD(t *testing.T) {
 			t.Fatalf("status = %d: %v", resp.StatusCode, body)
 		}
 		sessionID, _ = body["id"].(string)
-		if body["port"] != float64(22) {
-			t.Errorf("port = %v, want the SSH default", body["port"])
+		// Two fields, saying two different things: the column is what the
+		// user typed, where zero means inherit and the form renders blank,
+		// and effective_port is what that resolves to.
+		if body["port"] != float64(0) {
+			t.Errorf("port = %v, want 0 when none was given", body["port"])
+		}
+		if body["effective_port"] != float64(22) {
+			t.Errorf("effective_port = %v, want the SSH default", body["effective_port"])
 		}
 	})
 

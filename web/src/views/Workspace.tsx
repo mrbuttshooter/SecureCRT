@@ -260,7 +260,7 @@ export function Workspace({ active }: { active: boolean }) {
             <h3>{selected.name}</h3>
             <p className="muted">
               {selected.username ? `${selected.username}@` : ''}
-              {selected.hostname}:{selected.port} · {selected.protocol}
+              {selected.hostname}:{selected.effective_port} · {selected.protocol}
             </p>
             <div className="row">
               <button onClick={() => connect(selected)}>Connect</button>

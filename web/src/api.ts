@@ -260,7 +260,17 @@ export interface SavedSession {
   name: string
   protocol: 'ssh' | 'telnet' | 'serial'
   hostname: string
+  /**
+   * The port as saved. Zero means "inherit from the folder", so the editor
+   * renders the field blank — the same convention as a blank username.
+   */
   port: number
+  /**
+   * The port this connection will actually dial, after folder inheritance.
+   * Always non-zero. This is what a host:port label should show; the raw
+   * column would print ":0" for anything taking its folder's default.
+   */
+  effective_port: number
   username: string
   credential_id: string
   jump_chain: string[]

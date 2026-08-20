@@ -33,7 +33,10 @@ export function SessionEditor(props: SessionEditorProps) {
   const [name, setName] = useState(editing?.name ?? '')
   const [hostname, setHostname] = useState(editing?.hostname ?? '')
   const [protocol, setProtocol] = useState<'ssh' | 'telnet' | 'serial'>(editing?.protocol ?? 'ssh')
-  const [port, setPort] = useState(editing ? String(editing.port) : '')
+  // Blank means inherited, and zero is how the server says the same thing —
+  // so a saved connection with no port of its own opens with an empty field
+  // rather than the literal "0".
+  const [port, setPort] = useState(editing?.port ? String(editing.port) : '')
   const [username, setUsername] = useState(editing?.username ?? '')
   const [credentialId, setCredentialId] = useState(editing?.credential_id ?? '')
   const [keepalive, setKeepalive] = useState(

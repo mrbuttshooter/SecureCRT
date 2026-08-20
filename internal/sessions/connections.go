@@ -47,10 +47,11 @@ func (s *Store) CreateSession(ctx context.Context, p CreateSessionParams) (Sessi
 	if strings.TrimSpace(p.Hostname) == "" && p.Protocol != ProtocolSerial {
 		return Session{}, errors.New("sessions: a hostname is required")
 	}
-	if p.Port == 0 {
-		p.Port = p.Protocol.DefaultPort()
-	}
-	if p.Port < 1 || p.Port > 65535 {
+	// Zero is stored as zero, and means "inherit". Filling in the protocol's
+	// default here is what made a folder's default port unreachable for three
+	// phases: the column was never empty, so Resolve's fallback never ran and
+	// a folder default nobody could see was silently ignored.
+	if p.Port != 0 && (p.Port < 1 || p.Port > 65535) {
 		return Session{}, fmt.Errorf("sessions: port %d is out of range", p.Port)
 	}
 	if p.FolderID != "" {
@@ -262,7 +263,9 @@ func (s *Store) UpdateSession(ctx context.Context, ownerID, id string, p UpdateS
 		sess.Hostname = strings.TrimSpace(*p.Hostname)
 	}
 	if p.Port != nil {
-		if *p.Port < 1 || *p.Port > 65535 {
+		// Zero clears it back to inherited, the same as leaving the field
+		// blank when the connection was created.
+		if *p.Port != 0 && (*p.Port < 1 || *p.Port > 65535) {
 			return Session{}, fmt.Errorf("sessions: port %d is out of range", *p.Port)
 		}
 		sess.Port = *p.Port
@@ -359,6 +362,38 @@ func (s *Store) Resolve(ctx context.Context, ownerID, sessionID string) (Resolve
 		return Resolved{}, err
 	}
 
+	return resolveWith(sess, func(id string) (Folder, bool) {
+		folder, err := s.GetFolder(ctx, ownerID, id)
+		if err != nil {
+			// A folder that has vanished should not make the session
+			// unusable; the inheritance chain simply stops here.
+			return Folder{}, false
+		}
+		return folder, true
+	})
+}
+
+// Resolve applies inheritance using folders already in hand.
+//
+// The same rules as Store.Resolve, and deliberately the same code beneath:
+// export and the tree endpoint both need the effective values for every
+// session at once, and doing that through the query-per-folder path would be
+// a few thousand round trips for a large team. Two implementations of
+// inheritance would drift, and the way they would drift is that one of them
+// keeps working while the other quietly stops.
+func (t Tree) Resolve(sess Session) (Resolved, error) {
+	byID := make(map[string]Folder, len(t.Folders))
+	for _, folder := range t.Folders {
+		byID[folder.ID] = folder
+	}
+	return resolveWith(sess, func(id string) (Folder, bool) {
+		folder, ok := byID[id]
+		return folder, ok
+	})
+}
+
+// resolveWith walks the folder chain and produces the effective settings.
+func resolveWith(sess Session, lookup func(id string) (Folder, bool)) (Resolved, error) {
 	effective := sess.Settings
 	var inheritedFrom []string
 
@@ -367,10 +402,8 @@ func (s *Store) Resolve(ctx context.Context, ownerID, sessionID string) (Resolve
 		if depth > MaxDepth {
 			return Resolved{}, ErrTooDeep
 		}
-		folder, err := s.GetFolder(ctx, ownerID, current)
-		if err != nil {
-			// A folder that has vanished should not make the session
-			// unusable; the inheritance chain simply stops here.
+		folder, ok := lookup(current)
+		if !ok {
 			break
 		}
 		effective = effective.merge(folder.Defaults)
@@ -382,7 +415,9 @@ func (s *Store) Resolve(ctx context.Context, ownerID, sessionID string) (Resolve
 
 	// The column wins over the setting when both are present: the column is
 	// what the interface shows and edits, so a stale inherited value must not
-	// silently override what the user can see.
+	// silently override what the user can see. Empty means inherit — which
+	// for the port means *zero*, and storing zero rather than pre-filling the
+	// protocol default is what makes the folder default below reachable.
 	resolved.EffectiveUsername = sess.Username
 	if resolved.EffectiveUsername == "" && effective.Username != nil {
 		resolved.EffectiveUsername = *effective.Username

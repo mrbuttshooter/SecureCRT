@@ -168,6 +168,33 @@ type Session struct {
 	JumpChain    []string        `json:"jump_chain,omitempty"`
 	Settings     json.RawMessage `json:"settings,omitempty"`
 	SortOrder    int             `json:"sort_order,omitempty"`
+
+	// EffectivePort is Port with folder inheritance applied, and is not part
+	// of the bundle.
+	//
+	// A .bkbundle carries the folders and their defaults, so restoring it
+	// reproduces the inheritance — writing a resolved value into the file
+	// would pin every connection to whatever its folder said on the day it
+	// was exported, and quietly break the "change the folder, change them
+	// all" behaviour the export exists to preserve.
+	//
+	// The other formats have no folder defaults to carry, so for those the
+	// resolved value is the only correct thing to write. Hence a field that
+	// exists in memory and not on disk.
+	EffectivePort int `json:"-"`
+}
+
+// DialPort is the port to write into a format that has no folder defaults.
+//
+// EffectivePort when Gather resolved one, the raw column otherwise. An
+// override rather than a requirement, so a Payload assembled by hand — a
+// test, or a caller that never had a folder tree — still exports the port it
+// was given instead of silently exporting none.
+func (s Session) DialPort() int {
+	if s.EffectivePort > 0 {
+		return s.EffectivePort
+	}
+	return s.Port
 }
 
 // Credential is a key or password, in the clear inside the sealed payload.
