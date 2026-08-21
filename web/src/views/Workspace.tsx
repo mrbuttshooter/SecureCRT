@@ -74,6 +74,9 @@ export function Workspace({ active }: { active: boolean }) {
   const [error, setError] = useState<string | null>(null)
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; key: string } | null>(null)
+  // Ctrl+click multi-selection in the tree, for bulk connect and delete.
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const dragTab = useRef<string | null>(null)
   const [quickFocus, setQuickFocus] = useState(0)
   // Most-recently-active tab keys, newest first. Split mode shows the top
   // two, so what is on screen always includes the tab you last clicked —
@@ -473,6 +476,13 @@ export function Workspace({ active }: { active: boolean }) {
           onNewFolderIn={(parentId) => setPanel({ kind: 'folder', folder: null, parentId })}
           onEditSession={(session) => setPanel({ kind: 'session', session, folderId: session.folder_id })}
           onDeleteSession={(session) => void deleteSession(session)}
+          checkedIds={checked}
+          onToggleCheck={(session) => setChecked((prev) => {
+            const next = new Set(prev)
+            if (next.has(session.id)) next.delete(session.id)
+            else next.add(session.id)
+            return next
+          })}
           onMove={(kind, id, destination) => void move(kind, id, destination)}
         />
 
@@ -500,7 +510,42 @@ export function Workspace({ active }: { active: boolean }) {
           </div>
         )}
 
-        {selected && (
+        {checked.size > 1 && (
+          <div className="selection">
+            <h3>{checked.size} selected</h3>
+            <p className="muted">Ctrl+click adds or removes a connection.</p>
+            <div className="row">
+              <button onClick={() => {
+                const picked = tree.sessions.filter((s) => checked.has(s.id))
+                if (picked.length <= 5 || window.confirm(
+                  `Open ${picked.length} terminals, one per selected connection?`)) {
+                  picked.forEach((s) => connect(s))
+                }
+              }}>
+                Connect all {checked.size}
+              </button>
+              <button onClick={() => setChecked(new Set())}>Clear</button>
+              <button className="danger" onClick={() => {
+                const picked = tree.sessions.filter((s) => checked.has(s.id))
+                if (!window.confirm(
+                  `Delete ${picked.length} saved connections? This cannot be undone.`)) return
+                void (async () => {
+                  for (const s of picked) {
+                    try {
+                      await api.delete(`/api/tree/sessions/${s.id}`)
+                    } catch { /* gone already */ }
+                  }
+                  setChecked(new Set())
+                  await loadTree()
+                })()
+              }}>
+                Delete {checked.size}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {checked.size <= 1 && selected && (
           <div className="selection">
             <h3>{selected.name}</h3>
             <p className="muted">
@@ -546,6 +591,22 @@ export function Workspace({ active }: { active: boolean }) {
                 e.preventDefault()
                 setTabMenu({ x: e.clientX, y: e.clientY, key: tab.key })
               }}
+              draggable
+              onDragStart={() => { dragTab.current = tab.key }}
+              onDragOver={(e) => { if (dragTab.current) e.preventDefault() }}
+              onDrop={(e) => {
+                e.preventDefault()
+                const from = dragTab.current
+                dragTab.current = null
+                if (!from || from === tab.key) return
+                setTabs((prev) => {
+                  const moving = prev.find((t) => t.key === from)
+                  if (!moving) return prev
+                  const without = prev.filter((t) => t.key !== from)
+                  const at = without.findIndex((t) => t.key === tab.key)
+                  return [...without.slice(0, at), moving, ...without.slice(at)]
+                })
+              }}
             >
               <span className={'open-tab-dot ' +
                 (tab.ended ? 'dot-ended' : tab.terminalId ? 'dot-live' : 'dot-opening')} />
@@ -559,6 +620,13 @@ export function Workspace({ active }: { active: boolean }) {
           ))}
 
           <div className="tabstrip-tools">
+            {tabs.filter((t) => t.ended && t.sessionId).length > 1 && (
+              <button className="link"
+                      title="Redial every ended tab, in place"
+                      onClick={() => window.dispatchEvent(new CustomEvent('bkd:reconnect-all'))}>
+                Reconnect all {tabs.filter((t) => t.ended && t.sessionId).length}
+              </button>
+            )}
             <label className="inline"
                    title="Ask before pasting more than one line into a terminal">
               <input

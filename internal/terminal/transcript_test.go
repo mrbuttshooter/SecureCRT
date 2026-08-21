@@ -32,7 +32,7 @@ func newTestTranscript(t *testing.T, label string) (*Transcript, string) {
 func TestATranscriptRecordsWhatWasOnTheScreen(t *testing.T) {
 	transcript, _ := newTestTranscript(t, "core-sw-01")
 	shell := newFakeShell()
-	recorded := WithTranscript(shell, transcript)
+	recorded := WithTranscript(shell, NewTranscriptHolder(transcript))
 
 	go func() {
 		_, _ = shell.fromFarEnd.Write([]byte("switch> show version\r\n"))
@@ -77,7 +77,7 @@ func TestATranscriptRecordsWhatWasOnTheScreen(t *testing.T) {
 func TestKeystrokesAreNotRecorded(t *testing.T) {
 	transcript, _ := newTestTranscript(t, "core-sw-01")
 	shell := newFakeShell()
-	recorded := WithTranscript(shell, transcript)
+	recorded := WithTranscript(shell, NewTranscriptHolder(transcript))
 
 	go func() { _, _ = shell.fromFarEnd.Write([]byte("Password: ")) }()
 
@@ -334,10 +334,46 @@ func TestNoDirectoryMeansNoRecording(t *testing.T) {
 	}
 }
 
-// TestWithTranscriptIsFreeWhenThereIsNothingToRecord.
-func TestWithTranscriptIsFreeWhenThereIsNothingToRecord(t *testing.T) {
+// TestRecordingCanStartMidSession is the File-menu verb: output before the
+// swap stays unrecorded, output after it lands in the file. The wrapper is
+// always present now precisely so this works without rewrapping a shell that
+// another goroutine is mid-Read on.
+func TestRecordingCanStartMidSession(t *testing.T) {
+	dir := t.TempDir()
 	shell := newFakeShell()
-	if got := WithTranscript(shell, nil); got != Shell(shell) {
-		t.Error("a session with no transcript should not be wrapped at all")
+	holder := NewTranscriptHolder(nil)
+	recorded := WithTranscript(shell, holder)
+
+	buf := make([]byte, 64)
+	go func() { _, _ = shell.fromFarEnd.Write([]byte("before the click\r\n")) }()
+	if _, err := recorded.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+
+	transcript, err := NewTranscript(TranscriptConfig{
+		Dir: dir, UserID: "u", Label: "sw",
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder.Swap(transcript)
+
+	go func() { _, _ = shell.fromFarEnd.Write([]byte("after the click\r\n")) }()
+	if _, err := recorded.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	if err := transcript.Close(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(transcript.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "before the click") {
+		t.Error("output from before recording started must not be in the file")
+	}
+	if !strings.Contains(string(data), "after the click") {
+		t.Error("output from after recording started must be in the file")
 	}
 }

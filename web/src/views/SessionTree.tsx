@@ -16,6 +16,9 @@ export interface SessionTreeProps {
   onNewFolderIn: (folderId: string) => void
   onEditSession: (session: SavedSession) => void
   onDeleteSession: (session: SavedSession) => void
+  /** Ctrl+click multi-selection, owned by the workspace. */
+  checkedIds: Set<string>
+  onToggleCheck: (session: SavedSession) => void
   /** Move an item to a folder. Empty destination means the top level. */
   onMove: (kind: 'folder' | 'session', id: string, destinationFolderId: string) => void
 }
@@ -93,6 +96,7 @@ export function SessionTree(props: SessionTreeProps) {
       className={
         'tree-row tree-session' +
         (props.selectedId === s.id ? ' selected' : '') +
+        (props.checkedIds.has(s.id) ? ' checked' : '') +
         (props.liveSessionIds.has(s.id) ? ' live' : '')
       }
       style={{ paddingLeft: `${depth * 14 + 22}px` }}
@@ -116,7 +120,12 @@ export function SessionTree(props: SessionTreeProps) {
         // which would otherwise all end up in the accessible name and make
         // every row read as a sentence. The name is what identifies it.
         aria-label={s.name}
-        onClick={() => props.onSelect(s)}
+        onClick={(e) => {
+          // Ctrl+click gathers; a plain click selects, the way the file
+          // browser next door already behaves.
+          if (e.ctrlKey || e.metaKey) props.onToggleCheck(s)
+          else props.onSelect(s)
+        }}
         onDoubleClick={() => props.onOpen(s)}
         title={`${s.username ? s.username + '@' : ''}${s.hostname}:${s.effective_port}`}
       >

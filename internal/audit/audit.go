@@ -78,6 +78,12 @@ const (
 	ActionTerminalConnectFailed Action = "terminal.connect.failed"
 	ActionTerminalClosed        Action = "terminal.closed"
 
+	// Recording toggled mid-session. Started/stopped by the user; a
+	// policy-forced recording never generates these because it cannot be
+	// toggled.
+	ActionRecordingStarted Action = "terminal.recording.started"
+	ActionRecordingStopped Action = "terminal.recording.stopped"
+
 	// Tunnels. docs/SECURITY.md has claimed since Phase 0 that tunnel
 	// creation is audited; from here that is true.
 	ActionTunnelOpened   Action = "tunnel.opened"

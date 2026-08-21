@@ -13,10 +13,11 @@ import { Files } from './views/Files'
 import { Transfer } from './views/Transfer'
 import { Tunnels } from './views/Tunnels'
 import { Snippets } from './views/Snippets'
+import { Transcripts } from './views/Transcripts'
 
 type Tab =
   | 'terminal' | 'files' | 'tunnels' | 'snippets' | 'credentials'
-  | 'hosts' | 'transfer' | 'sessions' | 'security'
+  | 'hosts' | 'recordings' | 'transfer' | 'sessions' | 'security'
 
 /**
  * App decides what to show from a single whoami response.
@@ -123,6 +124,8 @@ export function App() {
                 onClick={() => setTab('credentials')}>Credentials</button>
         <button aria-current={tab === 'hosts' ? 'page' : undefined}
                 onClick={() => setTab('hosts')}>Known hosts</button>
+        <button aria-current={tab === 'recordings' ? 'page' : undefined}
+                onClick={() => setTab('recordings')}>Transcripts</button>
         <button aria-current={tab === 'transfer' ? 'page' : undefined}
                 onClick={() => setTab('transfer')}>Import / export</button>
         <button aria-current={tab === 'sessions' ? 'page' : undefined}
@@ -158,6 +161,7 @@ export function App() {
       {tab === 'snippets' && <Snippets />}
       {tab === 'credentials' && <Credentials />}
       {tab === 'hosts' && <KnownHosts />}
+      {tab === 'recordings' && <Transcripts />}
       {tab === 'transfer' && <Transfer />}
       {tab === 'sessions' && <Sessions />}
       {tab === 'security' && <Security me={me} onChanged={refresh} />}

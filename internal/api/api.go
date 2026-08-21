@@ -291,6 +291,8 @@ func (a *API) Routes() http.Handler {
 		"PATCH /api/tree/sessions/{id}", "DELETE /api/tree/sessions/{id}",
 		"GET /api/tree/sessions/{id}/resolved",
 		"GET /api/terminals", "DELETE /api/terminals/{id}",
+		"POST /api/terminals/{id}/recording",
+		"GET /api/transcripts", "GET /api/transcripts/{name}",
 		"GET /api/known-hosts", "DELETE /api/known-hosts/{id}",
 
 		"GET /api/files/sessions", "POST /api/files/sessions",
@@ -415,8 +417,16 @@ func (a *API) routeAuthenticated(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodGet && path == "/api/terminals":
 		a.handleListTerminals(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/api/terminals/") &&
+		strings.HasSuffix(path, "/recording"):
+		a.handleToggleRecording(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/terminals/"):
 		a.handleCloseTerminal(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/transcripts":
+		a.handleListTranscripts(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/transcripts/"):
+		a.handleDownloadTranscript(w, r)
 
 	case r.Method == http.MethodGet && path == "/api/known-hosts":
 		a.handleListKnownHosts(w, r)

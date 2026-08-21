@@ -867,3 +867,34 @@ table.grid th {
   white-space: pre; background: var(--bg);
   border: 1px solid var(--border); border-radius: var(--radius);
 }
+
+/* --- multi-select, recording light, editable paste ------------------------- */
+
+.tree-row.checked { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+
+/* The camera light: a red dot that breathes while a transcript is written.
+   Slow on purpose — a light that blinks fast reads as an alarm. */
+.rec-light {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.05em;
+  color: var(--danger);
+}
+.rec-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--danger);
+  animation: rec-breathe 2.4s ease-in-out infinite;
+}
+@keyframes rec-breathe {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--danger); }
+  50% { opacity: 0.45; box-shadow: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-dot { animation: none; }
+}
+.rec-light .link { font-size: 0.72rem; }
+
+textarea.paste-preview {
+  width: 100%; min-height: 8rem; max-height: 14rem; resize: vertical;
+  white-space: pre; overflow: auto;
+  font-family: var(--mono); font-size: 0.8rem; line-height: 1.4;
+}

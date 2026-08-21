@@ -87,7 +87,7 @@ type Terminal struct {
 	// the scrollback instead of losing its colours until the next reload.
 	Highlights []Highlight
 
-	transcript *Transcript
+	recording *TranscriptHolder
 
 	shell Shell
 	log   *slog.Logger
@@ -274,8 +274,9 @@ type OpenParams struct {
 	// Highlights are the rules the browser draws rather than the server.
 	Highlights []Highlight
 
-	// Transcript is the open recording, when there is one.
-	Transcript *Transcript
+	// Recording is the slot the transcript occupies, present whether or not
+	// anything is recording right now, so recording can start later.
+	Recording *TranscriptHolder
 
 	// Recorded and RecordForced describe that recording to the interface.
 	Recorded     bool
@@ -284,10 +285,53 @@ type OpenParams struct {
 
 // TranscriptPath is where this session is being written, or empty.
 func (t *Terminal) TranscriptPath() string {
-	if t.transcript == nil {
+	if t.recording == nil {
 		return ""
 	}
-	return t.transcript.Path()
+	current := t.recording.Current()
+	if current == nil {
+		return ""
+	}
+	return current.Path()
+}
+
+// StartRecording installs an open transcript on a running session.
+func (t *Terminal) StartRecording(transcript *Transcript) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return fmt.Errorf("terminal: the session has ended")
+	}
+	if t.recording == nil {
+		return fmt.Errorf("terminal: this session cannot be recorded")
+	}
+	if t.recording.Current() != nil {
+		return fmt.Errorf("terminal: this session is already being recorded")
+	}
+	t.recording.Swap(transcript)
+	t.Recorded = true
+	return nil
+}
+
+// StopRecording closes the transcript and leaves the session running.
+//
+// Refused when the recording is the operator's policy rather than the user's
+// choice: the person being recorded does not get to turn the camera off.
+func (t *Terminal) StopRecording() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.RecordForced {
+		return fmt.Errorf("terminal: recording is required by this server's policy")
+	}
+	if t.recording == nil || t.recording.Current() == nil {
+		return nil
+	}
+	old := t.recording.Swap(nil)
+	t.Recorded = false
+	if old != nil {
+		_ = old.Close(time.Now())
+	}
+	return nil
 }
 
 // Open registers a shell somebody else opened and starts pumping it.
@@ -331,7 +375,7 @@ func (m *Manager) Open(shell Shell, release func(), p OpenParams) (*Terminal, er
 		Highlights:   p.Highlights,
 		Recorded:     p.Recorded,
 		RecordForced: p.RecordForced,
-		transcript:   p.Transcript,
+		recording:    p.Recording,
 
 		shell:   shell,
 		release: release,

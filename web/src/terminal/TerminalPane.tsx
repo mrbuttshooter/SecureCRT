@@ -5,7 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
-import type { LiveTerminal } from '../api'
+import { api, type LiveTerminal } from '../api'
 import { TerminalSocket, type HostKeyInfo, type LinkState, type TriggerEvent } from './socket'
 import { HostKeyDialog } from './HostKeyDialog'
 import { BroadcastMenu, SnippetMenu } from './SessionTools'
@@ -283,6 +283,13 @@ export function TerminalPane(props: TerminalPaneProps) {
     }
     screen?.addEventListener('paste', onPaste, true)
 
+    // "Reconnect all" is one event the workspace broadcasts; each dead pane
+    // answers for itself, because only the pane knows whether it can.
+    const onReconnectAll = () => {
+      if (stateRef.current === 'ended') reconnectRef.current()
+    }
+    window.addEventListener('bkd:reconnect-all', onReconnectAll)
+
     // App chords are claimed before xterm can forward them to the host:
     // returning false stops the ESC-sequence from reaching the switch, while
     // the DOM event still bubbles to the workspace's own listener, which is
@@ -347,6 +354,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       wrote.dispose()
       screen?.removeEventListener('contextmenu', onContextMenu)
       screen?.removeEventListener('paste', onPaste, true)
+      window.removeEventListener('bkd:reconnect-all', onReconnectAll)
       marks.dispose()
       unregisterTerminal(callbacks.current.paneKey)
       typed.dispose()
@@ -465,11 +473,18 @@ export function TerminalPane(props: TerminalPaneProps) {
             {linesBack} lines up {'↓'}
           </button>
         )}
-        {recorded && (
-          <span className="tag warn-tag" title="Output is being written to a transcript">
-            recording
-          </span>
-        )}
+        <RecordingControl
+          terminalId={terminalId}
+          recorded={recorded}
+          forced={props.otherTerminals.find((t) => t.id === terminalId)?.record_forced ?? false}
+          onChanged={(now) => {
+            setRecorded(now)
+            say('info', now
+              ? 'Recording started. Output from here on is written to a transcript.'
+              : 'Recording stopped.')
+          }}
+          onError={(message) => say('warning', message)}
+        />
         {group.length > 0 && (
           <span className="tag warn-tag" data-testid="broadcast-badge">
             typing into {group.length + 1}
@@ -629,7 +644,17 @@ export function TerminalPane(props: TerminalPaneProps) {
               Each line runs as it arrives {'—'} network devices do not wait
               for the end of a paste.
             </p>
-            <pre className="paste-preview">{pendingPaste}</pre>
+            {/*
+              Editable, like SecureCRT's: the dialog is a last chance to trim
+              the interface names that came along with the copy, not just a
+              speed bump to click through.
+            */}
+            <textarea
+              className="paste-preview"
+              aria-label="The text about to be pasted"
+              value={pendingPaste}
+              onChange={(e) => setPendingPaste(e.target.value)}
+            />
             <div className="row">
               <button className="primary" autoFocus
                       onClick={() => { term.current?.paste(pendingPaste); setPendingPaste(null); term.current?.focus() }}>
@@ -693,5 +718,60 @@ function PaneFacts({ terminalId, terminals, dims }: {
       )}
       {dims && <span className="mono dims">{dims.cols}{'×'}{dims.rows}</span>}
     </span>
+  )
+}
+
+/**
+ * RecordingControl is the camera light: a live red dot while a transcript is
+ * being written, and the switch that starts or stops one. A recording the
+ * operator forced shows the light with no switch — the person being recorded
+ * does not get to turn the camera off, and the interface does not pretend
+ * otherwise.
+ */
+function RecordingControl({ terminalId, recorded, forced, onChanged, onError }: {
+  terminalId: string
+  recorded: boolean
+  forced: boolean
+  onChanged: (recorded: boolean) => void
+  onError: (message: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+
+  const toggle = async (on: boolean) => {
+    setBusy(true)
+    try {
+      const r = await api.post<{ recorded: boolean }>(
+        `/api/terminals/${encodeURIComponent(terminalId)}/recording`, { on })
+      onChanged(r.recorded)
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (recorded) {
+    return (
+      <span className="rec-light" title={forced
+        ? 'Recording is required by this server’s policy'
+        : 'Output is being written to a transcript'}>
+        <span className="rec-dot" />
+        REC
+        {!forced && (
+          <button className="link" disabled={busy || !terminalId}
+                  onClick={() => void toggle(false)}>
+            stop
+          </button>
+        )}
+      </span>
+    )
+  }
+
+  return (
+    <button className="link rec-start" disabled={busy || !terminalId}
+            title="Write this session's output to a transcript from now on"
+            onClick={() => void toggle(true)}>
+      Record
+    </button>
   )
 }

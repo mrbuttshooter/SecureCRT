@@ -205,7 +205,8 @@ func (c *Connector) connectSSH(ctx context.Context, p ConnectParams) (*Terminal,
 	}
 
 	triggers := conn.Resolved.Settings.EffectiveTriggers()
-	watched := WithTriggers(WithTranscript(shell, transcript),
+	recording := NewTranscriptHolder(transcript)
+	watched := WithTriggers(WithTranscript(shell, recording),
 		triggers, logon.Username, logon.Password, p.OnTrigger)
 
 	term, err := c.manager.Open(watched, conn.Release, OpenParams{
@@ -220,7 +221,7 @@ func (c *Connector) connectSSH(ctx context.Context, p ConnectParams) (*Terminal,
 		AgentRefused: shell.AgentRefused() != nil,
 		Triggers:     len(triggers),
 		Highlights:   HighlightsFrom(triggers),
-		Transcript:   transcript,
+		Recording:    recording,
 		Recorded:     transcript != nil,
 		RecordForced: forced,
 		Transport: Transport{
@@ -319,8 +320,9 @@ func (c *Connector) connectTelnet(
 	// to see happened.
 	steps := resolved.Settings.EffectiveLogonSteps(logon.Password != "")
 	triggers := resolved.Settings.EffectiveTriggers()
+	recording := NewTranscriptHolder(transcript)
 	shell := WithTriggers(
-		WithTranscript(WithLogon(conn, steps, logon.Username, logon.Password), transcript),
+		WithTranscript(WithLogon(conn, steps, logon.Username, logon.Password), recording),
 		triggers, logon.Username, logon.Password, p.OnTrigger)
 
 	term, err := c.manager.Open(shell, nil, OpenParams{
@@ -333,7 +335,7 @@ func (c *Connector) connectTelnet(
 		LogonSteps:   len(steps),
 		Triggers:     len(triggers),
 		Highlights:   HighlightsFrom(triggers),
-		Transcript:   transcript,
+		Recording:    recording,
 		Recorded:     transcript != nil,
 		RecordForced: forced,
 		Transport: Transport{
@@ -435,8 +437,9 @@ func (c *Connector) connectSerial(
 
 	steps := resolved.Settings.EffectiveLogonSteps(logon.Password != "")
 	triggers := resolved.Settings.EffectiveTriggers()
+	recording := NewTranscriptHolder(transcript)
 	shell := WithTriggers(
-		WithTranscript(WithLogon(port, steps, logon.Username, logon.Password), transcript),
+		WithTranscript(WithLogon(port, steps, logon.Username, logon.Password), recording),
 		triggers, logon.Username, logon.Password, p.OnTrigger)
 
 	term, err := c.manager.Open(shell, release, OpenParams{
@@ -449,7 +452,7 @@ func (c *Connector) connectSerial(
 		LogonSteps:   len(steps),
 		Triggers:     len(triggers),
 		Highlights:   HighlightsFrom(triggers),
-		Transcript:   transcript,
+		Recording:    recording,
 		Recorded:     transcript != nil,
 		RecordForced: forced,
 		Transport: Transport{
@@ -548,6 +551,36 @@ func (c *Connector) recordingFor(resolved sessions.Resolved) (*Transcript, bool,
 		return nil, forced, err
 	}
 	return transcript, forced, nil
+}
+
+// SessionLogDir is where transcripts live, for the handlers that list them.
+func (c *Connector) SessionLogDir() string { return c.policy.SessionLogDir }
+
+// StartRecording begins a transcript on a running terminal.
+//
+// The File-menu verb: somebody realises mid-session that this one should be
+// kept. The transcript starts at the moment of the click — the replay buffer
+// is deliberately not backfilled, because a file that silently contains
+// output from before "start recording" was pressed is a file that lies about
+// when recording started.
+func (c *Connector) StartRecording(t *Terminal) (string, error) {
+	if c.policy.SessionLogDir == "" {
+		return "", fmt.Errorf("terminal: no session_log_dir is configured")
+	}
+	transcript, err := NewTranscript(TranscriptConfig{
+		Dir:    c.policy.SessionLogDir,
+		UserID: t.UserID,
+		Label:  t.Label,
+		Forced: false,
+	}, time.Now())
+	if err != nil {
+		return "", err
+	}
+	if err := t.StartRecording(transcript); err != nil {
+		_ = transcript.Close(time.Now())
+		return "", err
+	}
+	return transcript.Path(), nil
 }
 
 // viaDetail summarises the route for the terminal header.

@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -284,21 +286,48 @@ func safeName(in string) string {
 // and a record of it is most worth having.
 type recordingShell struct {
 	Shell
-	transcript *Transcript
+	recording *TranscriptHolder
 }
 
 // WithTranscript returns shell with its output recorded.
-func WithTranscript(shell Shell, transcript *Transcript) Shell {
-	if transcript == nil {
-		return shell
+func WithTranscript(shell Shell, recording *TranscriptHolder) Shell {
+	return &recordingShell{Shell: shell, recording: recording}
+}
+
+// TranscriptHolder is the slot a recording occupies while a session runs.
+//
+// The wrapper is always present and the transcript is what comes and goes:
+// that is what lets File-menu-style "start logging now" exist at all, because
+// the alternative — rewrapping a shell that is mid-Read from another
+// goroutine — is not an alternative. One atomic load per Read is the price,
+// which on a 32 KiB read is nothing.
+type TranscriptHolder struct {
+	p atomic.Pointer[Transcript]
+}
+
+// NewTranscriptHolder starts with the given transcript, which may be nil.
+func NewTranscriptHolder(t *Transcript) *TranscriptHolder {
+	h := &TranscriptHolder{}
+	if t != nil {
+		h.p.Store(t)
 	}
-	return &recordingShell{Shell: shell, transcript: transcript}
+	return h
+}
+
+// Current is the open recording, or nil.
+func (h *TranscriptHolder) Current() *Transcript { return h.p.Load() }
+
+// Swap installs a transcript (or nil to stop) and returns what was there.
+func (h *TranscriptHolder) Swap(t *Transcript) *Transcript {
+	return h.p.Swap(t)
 }
 
 func (r *recordingShell) Read(p []byte) (int, error) {
 	n, err := r.Shell.Read(p)
 	if n > 0 {
-		r.transcript.write(p[:n])
+		if t := r.recording.Current(); t != nil {
+			t.write(p[:n])
+		}
 	}
 	return n, err
 }
@@ -306,6 +335,64 @@ func (r *recordingShell) Read(p []byte) (int, error) {
 // Close ends the transcript with the session.
 func (r *recordingShell) Close() error {
 	err := r.Shell.Close()
-	_ = r.transcript.Close(time.Now())
+	if t := r.recording.Current(); t != nil {
+		_ = t.Close(time.Now())
+	}
 	return err
+}
+
+// TranscriptInfo describes one recorded file, for the interface.
+type TranscriptInfo struct {
+	Name     string    `json:"name"`
+	Size     int64     `json:"size"`
+	Modified time.Time `json:"modified"`
+}
+
+// ListTranscripts returns a user's transcripts, newest first.
+//
+// A missing directory is an empty list, not an error: it means this user has
+// never recorded anything, which is the ordinary state of affairs.
+func ListTranscripts(dir, userID string) ([]TranscriptInfo, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, safeName(userID)))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("terminal: listing transcripts: %w", err)
+	}
+	out := make([]TranscriptInfo, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".log") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, TranscriptInfo{
+			Name: e.Name(), Size: info.Size(), Modified: info.ModTime().UTC(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Modified.After(out[j].Modified) })
+	return out, nil
+}
+
+// OpenTranscriptFile opens one of a user's transcripts for reading.
+//
+// The open goes through a root scoped to the user's own directory, the same
+// containment the writer uses: whatever name arrives, the kernel refuses to
+// leave the directory.
+func OpenTranscriptFile(dir, userID, name string) (*os.File, error) {
+	if dir == "" {
+		return nil, os.ErrNotExist
+	}
+	root, err := os.OpenRoot(filepath.Join(dir, safeName(userID)))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return root.Open(name)
 }
