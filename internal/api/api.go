@@ -16,6 +16,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/portability"
 	"github.com/mrbuttshooter/securecrt/internal/proto/tunnel"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
+	"github.com/mrbuttshooter/securecrt/internal/teams"
 	"github.com/mrbuttshooter/securecrt/internal/snippets"
 	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
@@ -92,6 +93,7 @@ type API struct {
 	// The terminal side: the saved-connection tree, the live terminals, and
 	// the connector that joins them to SSH.
 	sessionTree *sessions.Store
+	teams       *teams.Store
 	terminals   *terminal.Manager
 	connector   *terminal.Connector
 	hostKeys    *hostkeys.Store
@@ -126,6 +128,7 @@ type Deps struct {
 	MasterKey   vault.Key
 
 	SessionTree *sessions.Store
+	Teams       *teams.Store
 	Terminals   *terminal.Manager
 	Connector   *terminal.Connector
 	HostKeys    *hostkeys.Store
@@ -160,6 +163,7 @@ func New(cfg Config, deps Deps, log *slog.Logger) (*API, error) {
 		credentials: deps.Credentials,
 		audit:       deps.Audit,
 		sessionTree: deps.SessionTree,
+		teams:       deps.Teams,
 		terminals:   deps.Terminals,
 		connector:   deps.Connector,
 		hostKeys:    deps.HostKeys,
@@ -293,6 +297,11 @@ func (a *API) Routes() http.Handler {
 		"GET /api/terminals", "DELETE /api/terminals/{id}",
 		"POST /api/terminals/{id}/recording",
 		"GET /api/transcripts", "GET /api/transcripts/{name}",
+		"GET /api/teams", "POST /api/teams", "DELETE /api/teams/{id}",
+		"GET /api/teams/{id}/members", "POST /api/teams/{id}/members",
+		"DELETE /api/teams/{id}/members/{user}",
+		"PUT /api/tree/folders/{id}/credential",
+		"GET /api/admin/users", "GET /api/admin/terminals", "GET /api/admin/audit",
 		"GET /api/known-hosts", "DELETE /api/known-hosts/{id}",
 
 		"GET /api/files/sessions", "POST /api/files/sessions",
@@ -414,6 +423,57 @@ func (a *API) routeAuthenticated(w http.ResponseWriter, r *http.Request) {
 		a.handleUpdateSavedSession(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/tree/sessions/"):
 		a.handleDeleteSavedSession(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/teams":
+		a.handleListTeams(w, r)
+	case r.Method == http.MethodPost && path == "/api/teams":
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleCreateTeam(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/teams/") &&
+		strings.HasSuffix(path, "/members"):
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleListTeamMembers(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/api/teams/") &&
+		strings.HasSuffix(path, "/members"):
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleAddTeamMember(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/teams/") &&
+		strings.Contains(path, "/members/"):
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleRemoveTeamMember(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/teams/"):
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleDeleteTeam(w, r)
+
+	case r.Method == http.MethodPut && strings.HasPrefix(path, "/api/tree/folders/") &&
+		strings.HasSuffix(path, "/credential"):
+		a.handleSetFolderCredential(w, r)
+
+	case r.Method == http.MethodGet && path == "/api/admin/users":
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleListUsers(w, r)
+	case r.Method == http.MethodGet && path == "/api/admin/terminals":
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleAdminTerminals(w, r)
+	case r.Method == http.MethodGet && path == "/api/admin/audit":
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleAdminAudit(w, r)
 
 	case r.Method == http.MethodGet && path == "/api/terminals":
 		a.handleListTerminals(w, r)

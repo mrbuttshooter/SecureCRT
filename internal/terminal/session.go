@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -170,6 +171,9 @@ type Manager struct {
 
 	stopOnce sync.Once
 	stop     chan struct{}
+
+	// draining refuses new sessions while an upgrade waits for the old ones.
+	draining atomic.Bool
 }
 
 // NewManager builds a Manager and starts reaping abandoned terminals.
@@ -643,7 +647,10 @@ func (m *Manager) CloseTerminal(userID, terminalID string) error {
 
 // Info summarises a terminal for listing.
 type Info struct {
-	ID        string `json:"id"`
+	ID string `json:"id"`
+	// UserID is filled for the administrator's all-users view and omitted
+	// from a user's own listing, where it would only repeat the obvious.
+	UserID    string `json:"user_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	Label     string `json:"label"`
 
@@ -708,6 +715,68 @@ func (m *Manager) ListForUser(userID string) []Info {
 	// a list that rearranges itself between refreshes is a list nobody can
 	// use. Ties broken by identifier, which is time-ordered, so two terminals
 	// opened in the same instant still come out the same way twice.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// SetDraining flips maintenance mode: new sessions are refused, existing
+// ones run on, and reattachment keeps working — a browser reload during a
+// drain must not orphan someone's work.
+func (m *Manager) SetDraining(on bool) { m.draining.Store(on) }
+
+// Draining reports whether the server is refusing new sessions.
+func (m *Manager) Draining() bool { return m.draining.Load() }
+
+// OpenCount is how many terminals are still running, for the drain watcher.
+func (m *Manager) OpenCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	n := 0
+	for _, t := range m.terminals {
+		t.mu.Lock()
+		if !t.closed {
+			n++
+		}
+		t.mu.Unlock()
+	}
+	return n
+}
+
+// ListAll returns every live terminal, for the administrator's view.
+//
+// The same shape ListForUser returns, unfiltered. Authorisation is the
+// caller's business — this package does not know who is asking.
+func (m *Manager) ListAll() []Info {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]Info, 0, len(m.terminals))
+	for _, t := range m.terminals {
+		t.mu.Lock()
+		out = append(out, Info{
+			ID:           t.ID,
+			UserID:       t.UserID,
+			SessionID:    t.SessionID,
+			Label:        t.Label,
+			Protocol:     string(t.Transport.Protocol),
+			Host:         t.Transport.Host,
+			Port:         t.Transport.Port,
+			Device:       t.Transport.Device,
+			Encrypted:    t.Transport.Encrypted(),
+			Recorded:     t.Recorded,
+			RecordForced: t.RecordForced,
+			Username:     t.Username,
+			CreatedAt:    t.CreatedAt,
+			Attached:     t.attached != nil,
+			Closed:       t.closed,
+		})
+		t.mu.Unlock()
+	}
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
 			return out[i].CreatedAt.Before(out[j].CreatedAt)

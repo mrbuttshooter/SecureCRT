@@ -388,6 +388,18 @@ func (a *API) withMFA(next http.Handler) http.Handler {
 	})
 }
 
+// adminGate is withAdmin for handlers dispatched from the switch: it writes
+// the refusal and reports whether the caller may proceed.
+func (a *API) adminGate(w http.ResponseWriter, r *http.Request) bool {
+	u, ok := UserFrom(r.Context())
+	if !ok || !u.IsAdmin {
+		writeError(w, a.log, http.StatusForbidden, CodeForbidden,
+			"This action requires administrator rights.")
+		return false
+	}
+	return true
+}
+
 // withAdmin restricts a route to administrators.
 func (a *API) withAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

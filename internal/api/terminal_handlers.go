@@ -112,6 +112,14 @@ func (a *API) handleTerminalSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case query.Get("session") != "":
+		// A draining server takes no new work. Reattach stays open above —
+		// a reload during the drain must not orphan a session that the
+		// drain itself is waiting on.
+		if a.terminals.Draining() {
+			sendSocketError(ctx, conn, a, "draining",
+				"This server is closing for maintenance and is not taking new sessions. Existing sessions keep running.")
+			return
+		}
 		term, err = a.openTerminal(ctx, conn, u.ID, sess.ID, query.Get("session"),
 			cols, rows, r, triggerEvents)
 		if err != nil {

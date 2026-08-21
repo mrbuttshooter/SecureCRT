@@ -27,6 +27,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/snippets"
 	"github.com/mrbuttshooter/securecrt/internal/store"
+	"github.com/mrbuttshooter/securecrt/internal/teams"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
 	"github.com/mrbuttshooter/securecrt/internal/users"
 	"github.com/mrbuttshooter/securecrt/internal/vault"
@@ -213,6 +214,7 @@ func (s *Server) buildAPI(ctx context.Context) error {
 		Audit:        audit.NewRecorder(s.db, s.log),
 		MasterKey:    s.master,
 		SessionTree:  sessionTree,
+		Teams:        teams.NewStore(s.db),
 		Terminals:    s.terminals,
 		FileSessions: s.fileSessions,
 		Transfers:    s.transfers,
@@ -283,6 +285,8 @@ func openAndMigrate(ctx context.Context, cfg config.Config, log *slog.Logger) (*
 // Run starts the HTTP listener and blocks until ctx is cancelled, then shuts
 // down gracefully.
 func (s *Server) Run(ctx context.Context) error {
+	s.watchDrainSignal(ctx)
+	s.sweepTranscripts(ctx)
 	ln, err := net.Listen("tcp", s.cfg.Server.Bind)
 	if err != nil {
 		return fmt.Errorf("server: listen on %s: %w", s.cfg.Server.Bind, err)
@@ -421,6 +425,13 @@ func (s *Server) routes() http.Handler {
 	// process that would recover on its own.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if s.terminals != nil && s.terminals.Draining() {
+			// The upgrade script watches this line: draining, and how many
+			// sessions it is still waiting for.
+			fmt.Fprintf(w, `{"status":"draining","version":%q,"open_terminals":%d}`+"\n",
+				config.Version, s.terminals.OpenCount())
+			return
+		}
 		fmt.Fprintf(w, `{"status":"ok","version":%q}`+"\n", config.Version)
 	})
 
@@ -594,4 +605,58 @@ func GenerateMasterKey(path string) error {
 	fmt.Println("Back this file up separately from the database.")
 	fmt.Println("Losing it means losing every shared team credential.")
 	return nil
+}
+
+// sweepTranscripts enforces the retention policy, once a day.
+//
+// Deletion by age, per file, inside the configured log directory only. Off
+// unless transcript_retention_days is set: a record nobody should silently
+// lose is kept until somebody chooses otherwise.
+func (s *Server) sweepTranscripts(ctx context.Context) {
+	days := s.cfg.Policy.TranscriptRetentionDays
+	dir := s.cfg.Paths.SessionLogDir
+	if days <= 0 || dir == "" {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+			removed := 0
+			users, err := os.ReadDir(dir)
+			if err == nil {
+				for _, u := range users {
+					if !u.IsDir() {
+						continue
+					}
+					sub := filepath.Join(dir, u.Name())
+					files, err := os.ReadDir(sub)
+					if err != nil {
+						continue
+					}
+					for _, f := range files {
+						if f.IsDir() || !strings.HasSuffix(f.Name(), ".log") {
+							continue
+						}
+						info, err := f.Info()
+						if err != nil || !info.ModTime().Before(cutoff) {
+							continue
+						}
+						if os.Remove(filepath.Join(sub, f.Name())) == nil {
+							removed++
+						}
+					}
+				}
+			}
+			if removed > 0 {
+				s.log.Info("transcript retention sweep", "removed", removed, "older_than_days", days)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }

@@ -11,11 +11,12 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/audit"
 	"github.com/mrbuttshooter/securecrt/internal/credentials"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
+	"github.com/mrbuttshooter/securecrt/internal/users"
 )
 
 // folderView renders a folder for the interface.
 func folderView(f sessions.Folder) map[string]any {
-	return map[string]any{
+	view := map[string]any{
 		"id":         f.ID,
 		"parent_id":  f.ParentID,
 		"name":       f.Name,
@@ -24,6 +25,10 @@ func folderView(f sessions.Folder) map[string]any {
 		"created_at": f.CreatedAt.Format(time.RFC3339),
 		"updated_at": f.UpdatedAt.Format(time.RFC3339),
 	}
+	if f.IsTeam {
+		view["team_id"] = f.OwnerID
+	}
+	return view
 }
 
 // savedSessionView renders a saved connection.
@@ -58,6 +63,9 @@ func savedSessionView(s sessions.Session, effectivePort int) map[string]any {
 	if s.LastUsedAt != nil {
 		view["last_used_at"] = s.LastUsedAt.Format(time.RFC3339)
 	}
+	if s.IsTeam {
+		view["team_id"] = s.OwnerID
+	}
 	return view
 }
 
@@ -68,7 +76,7 @@ func savedSessionView(s sessions.Session, effectivePort int) map[string]any {
 func (a *API) handleGetTree(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
 
-	tree, err := a.sessionTree.LoadTree(r.Context(), u.ID, false)
+	tree, err := a.sessionTree.LoadTreeForUser(r.Context(), u.ID)
 	if err != nil {
 		writeInternal(w, a.log, "loading the session tree", err)
 		return
@@ -91,10 +99,48 @@ func (a *API) handleGetTree(w http.ResponseWriter, r *http.Request) {
 		saved = append(saved, savedSessionView(s, resolved.EffectivePort))
 	}
 
+	// Team names ride along so shared folders can carry a labelled badge
+	// without a second request.
+	memberOf, err := a.teams.ListForUser(r.Context(), u.ID)
+	if err != nil {
+		writeInternal(w, a.log, "listing the user's teams", err)
+		return
+	}
+	teamNames := make([]map[string]any, 0, len(memberOf))
+	for _, t := range memberOf {
+		teamNames = append(teamNames, map[string]any{"id": t.ID, "name": t.Name})
+	}
+
 	writeJSON(w, a.log, http.StatusOK, map[string]any{
 		"folders":  folders,
 		"sessions": saved,
+		"teams":    teamNames,
 	})
+}
+
+// shroudedAdminCheck gates a mutation on the shared tree: only an
+// administrator may touch team-owned rows. Writes the response itself and
+// returns false when the caller must stop.
+func (a *API) shroudedAdminCheck(w http.ResponseWriter, u users.User) bool {
+	if u.IsAdmin {
+		return true
+	}
+	// Not-found rather than forbidden: a non-admin probing ids should learn
+	// nothing about what exists in other people's trees. Members see shared
+	// rows in their own tree view, and for them the honest sentence is the
+	// one below.
+	writeError(w, a.log, http.StatusForbidden, CodeForbidden,
+		"Shared connections are managed by an administrator.")
+	return false
+}
+
+// mutationScope decides which owner a tree mutation acts as: the user, or —
+// for an administrator touching the shared tree — the owning team.
+func mutationScope(u users.User, ownerID string, isTeam bool) (string, bool) {
+	if isTeam {
+		return ownerID, true
+	}
+	return u.ID, false
 }
 
 type folderRequest struct {
@@ -102,6 +148,9 @@ type folderRequest struct {
 	ParentID  string             `json:"parent_id"`
 	SortOrder *int               `json:"sort_order"`
 	Defaults  *sessions.Settings `json:"defaults"`
+	// TeamID publishes the folder into a team's shared tree. Administrators
+	// only; empty means the caller's personal tree.
+	TeamID string `json:"team_id"`
 }
 
 func (a *API) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
@@ -132,8 +181,32 @@ func (a *API) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 		defaults = *req.Defaults
 	}
 
+	// The destination decides the owner: an explicit team, or the team that
+	// owns the parent folder — a child of a shared folder cannot be personal,
+	// or the subtree would be visible to different people at different
+	// depths, which is a security bug wearing a UX hat.
+	ownerID, isTeam := u.ID, false
+	if req.TeamID != "" {
+		if !a.shroudedAdminCheck(w, u) {
+			return
+		}
+		ownerID, isTeam = req.TeamID, true
+	} else if req.ParentID != "" {
+		parent, err := a.sessionTree.GetFolderAny(r.Context(), req.ParentID)
+		if err != nil {
+			a.writeTreeError(w, err, "loading the parent folder")
+			return
+		}
+		if parent.IsTeam {
+			if !a.shroudedAdminCheck(w, u) {
+				return
+			}
+			ownerID, isTeam = parent.OwnerID, true
+		}
+	}
+
 	folder, err := a.sessionTree.CreateFolder(r.Context(), sessions.CreateFolderParams{
-		OwnerID: u.ID, ParentID: req.ParentID, Name: req.Name, Defaults: defaults,
+		OwnerID: ownerID, IsTeam: isTeam, ParentID: req.ParentID, Name: req.Name, Defaults: defaults,
 	})
 	if err != nil {
 		a.writeTreeError(w, err, "creating a folder")
@@ -179,7 +252,21 @@ func (a *API) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	folder, err := a.sessionTree.UpdateFolder(r.Context(), u.ID, id, sessions.UpdateFolderParams{
+	target, err := a.sessionTree.GetFolderAny(r.Context(), id)
+	if err != nil {
+		a.writeTreeError(w, err, "loading a folder")
+		return
+	}
+	if target.IsTeam && !a.shroudedAdminCheck(w, u) {
+		return
+	}
+	if !target.IsTeam && target.OwnerID != u.ID {
+		a.writeTreeError(w, sessions.ErrNotFound, "loading a folder")
+		return
+	}
+	ownerID, _ := mutationScope(u, target.OwnerID, target.IsTeam)
+
+	folder, err := a.sessionTree.UpdateFolder(r.Context(), ownerID, id, sessions.UpdateFolderParams{
 		Name: req.Name, ParentID: req.ParentID, SortOrder: req.SortOrder, Defaults: req.Defaults,
 	})
 	if err != nil {
@@ -200,16 +287,24 @@ func (a *API) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	folder, err := a.sessionTree.GetFolder(r.Context(), u.ID, id)
+	folder, err := a.sessionTree.GetFolderAny(r.Context(), id)
 	if err != nil {
 		a.writeTreeError(w, err, "loading a folder")
 		return
 	}
+	if folder.IsTeam && !a.shroudedAdminCheck(w, u) {
+		return
+	}
+	if !folder.IsTeam && folder.OwnerID != u.ID {
+		a.writeTreeError(w, sessions.ErrNotFound, "loading a folder")
+		return
+	}
+	deleteAs, _ := mutationScope(u, folder.OwnerID, folder.IsTeam)
 
 	// Recursion is opt-in via a query parameter, so a mis-sent request cannot
 	// destroy a subtree.
 	if r.URL.Query().Get("recursive") != "true" {
-		if err := a.sessionTree.DeleteFolder(r.Context(), u.ID, id); err != nil {
+		if err := a.sessionTree.DeleteFolder(r.Context(), deleteAs, id); err != nil {
 			a.writeTreeError(w, err, "deleting a folder")
 			return
 		}
@@ -222,7 +317,7 @@ func (a *API) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	destroyed, err := a.sessionTree.DeleteFolderRecursive(r.Context(), u.ID, id)
+	destroyed, err := a.sessionTree.DeleteFolderRecursive(r.Context(), deleteAs, id)
 	if err != nil {
 		a.writeTreeError(w, err, "deleting a folder")
 		return
@@ -283,8 +378,26 @@ func (a *API) handleCreateSavedSession(w http.ResponseWriter, r *http.Request) {
 		settings = *req.Settings
 	}
 
+	// A connection saved into a shared folder belongs to the folder's team.
+	ownerID, isTeam := u.ID, false
+	if req.FolderID != "" {
+		parent, err := a.sessionTree.GetFolderAny(r.Context(), req.FolderID)
+		if err != nil {
+			a.writeTreeError(w, err, "loading the destination folder")
+			return
+		}
+		if parent.IsTeam {
+			if !a.shroudedAdminCheck(w, u) {
+				return
+			}
+			ownerID, isTeam = parent.OwnerID, true
+		}
+	}
+
 	created, err := a.sessionTree.CreateSession(r.Context(), sessions.CreateSessionParams{
-		OwnerID:      u.ID,
+		OwnerID:      ownerID,
+		IsTeam:       isTeam,
+		ActorID:      u.ID,
 		FolderID:     req.FolderID,
 		Name:         req.Name,
 		Protocol:     sessions.Protocol(req.Protocol),
@@ -360,7 +473,21 @@ func (a *API) handleUpdateSavedSession(w http.ResponseWriter, r *http.Request) {
 		params.Protocol = &p
 	}
 
-	updated, err := a.sessionTree.UpdateSession(r.Context(), u.ID, id, params)
+	target, err := a.sessionTree.GetSessionAny(r.Context(), id)
+	if err != nil {
+		a.writeTreeError(w, err, "loading a saved connection")
+		return
+	}
+	if target.IsTeam && !a.shroudedAdminCheck(w, u) {
+		return
+	}
+	if !target.IsTeam && target.OwnerID != u.ID {
+		a.writeTreeError(w, sessions.ErrNotFound, "loading a saved connection")
+		return
+	}
+	updateAs, _ := mutationScope(u, target.OwnerID, target.IsTeam)
+
+	updated, err := a.sessionTree.UpdateSession(r.Context(), updateAs, id, params)
 	if err != nil {
 		a.writeTreeError(w, err, "updating a saved connection")
 		return
@@ -379,12 +506,20 @@ func (a *API) handleDeleteSavedSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read it first, so the audit record can name what went.
-	existing, err := a.sessionTree.GetSession(r.Context(), u.ID, id)
+	existing, err := a.sessionTree.GetSessionAny(r.Context(), id)
 	if err != nil {
 		a.writeTreeError(w, err, "loading a saved connection")
 		return
 	}
-	if err := a.sessionTree.DeleteSession(r.Context(), u.ID, id); err != nil {
+	if existing.IsTeam && !a.shroudedAdminCheck(w, u) {
+		return
+	}
+	if !existing.IsTeam && existing.OwnerID != u.ID {
+		a.writeTreeError(w, sessions.ErrNotFound, "loading a saved connection")
+		return
+	}
+	deleteAs, _ := mutationScope(u, existing.OwnerID, existing.IsTeam)
+	if err := a.sessionTree.DeleteSession(r.Context(), deleteAs, id); err != nil {
 		a.writeTreeError(w, err, "deleting a saved connection")
 		return
 	}

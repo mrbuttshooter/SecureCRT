@@ -195,6 +195,11 @@ type PolicyConfig struct {
 	RequireHostKeyVerify bool `yaml:"require_host_key_verify"`
 	RecordAllSessions    bool `yaml:"record_all_sessions"`
 
+	// TranscriptRetentionDays deletes transcripts older than this many days.
+	// Zero keeps everything forever, which is the right default for a record
+	// nobody should silently lose — retention is a policy someone chooses.
+	TranscriptRetentionDays int `yaml:"transcript_retention_days"`
+
 	// MaxUploadBytes caps one file-upload request. It is not a cap on file
 	// size — the browser splits a large file into chunks and resumes each at
 	// an offset — so raising it changes how much a single request may carry,
@@ -377,6 +382,7 @@ func Default() Config {
 			AllowPasswordAuth:    true,
 			RequireHostKeyVerify: true,
 			RecordAllSessions:    false,
+			TranscriptRetentionDays: 0,
 			MaxUploadBytes:       1 << 30,  // 1 GiB per request
 			MaxImportBytes:       64 << 20, // 64 MiB
 			AllowTCPTunnels:      false,

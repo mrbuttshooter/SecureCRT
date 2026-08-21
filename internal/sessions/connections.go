@@ -26,6 +26,12 @@ type CreateSessionParams struct {
 	CredentialID string
 	JumpChain    []string
 	Settings     Settings
+
+	// ActorID is who is performing the save, for validating jump chains by
+	// what that person can see. Empty means the owner — the ordinary case,
+	// where a user saves into their own tree. It differs when an
+	// administrator publishes into a team's tree.
+	ActorID string
 }
 
 // CreateSession saves a connection.
@@ -63,7 +69,11 @@ func (s *Store) CreateSession(ctx context.Context, p CreateSessionParams) (Sessi
 	// Validated before it is stored, not merely on the way out. The importer
 	// and the bundle restore both write chains through here, so this is the
 	// one place that catches a chain nobody typed.
-	if err := s.ValidateJumpChain(ctx, p.OwnerID, "", p.JumpChain); err != nil {
+	actor := p.ActorID
+	if actor == "" {
+		actor = p.OwnerID
+	}
+	if err := s.ValidateJumpChain(ctx, actor, "", p.JumpChain); err != nil {
 		return Session{}, err
 	}
 
@@ -356,14 +366,20 @@ func (s *Store) MarkUsed(ctx context.Context, id string) error {
 // defaults into whatever is still unset. Outer folders are weakest: a value
 // set on the session beats its immediate folder, which beats that folder's
 // parent, and so on.
-func (s *Store) Resolve(ctx context.Context, ownerID, sessionID string) (Resolved, error) {
-	sess, err := s.GetSession(ctx, ownerID, sessionID)
+func (s *Store) Resolve(ctx context.Context, userID, sessionID string) (Resolved, error) {
+	// Visible rather than owned: a member resolving a shared connection is
+	// the whole point of the shared tree, and this is the single gate the
+	// dial path, the jump-chain walker and the API all pass through.
+	sess, err := s.getSessionVisible(ctx, userID, sessionID)
 	if err != nil {
 		return Resolved{}, err
 	}
 
-	return resolveWith(sess, func(id string) (Folder, bool) {
-		folder, err := s.GetFolder(ctx, ownerID, id)
+	resolved, err := resolveWith(sess, func(id string) (Folder, bool) {
+		// Unchecked by owner: the walk starts from a session the user is
+		// already allowed to see, and a chain that crosses owners would be a
+		// data integrity bug, not an access decision to make here.
+		folder, err := s.GetFolderAny(ctx, id)
 		if err != nil {
 			// A folder that has vanished should not make the session
 			// unusable; the inheritance chain simply stops here.
@@ -371,6 +387,19 @@ func (s *Store) Resolve(ctx context.Context, ownerID, sessionID string) (Resolve
 		}
 		return folder, true
 	})
+	if err != nil {
+		return Resolved{}, err
+	}
+
+	// A shared connection carries no credential of its own — the admin
+	// published where, each member connects with what is theirs. The
+	// member's remembered choice for the folder fills the gap.
+	if sess.IsTeam && resolved.EffectiveCredentialID == "" {
+		if chosen := s.folderCredentialFor(ctx, userID, sess.FolderID); chosen != "" {
+			resolved.EffectiveCredentialID = chosen
+		}
+	}
+	return resolved, nil
 }
 
 // Resolve applies inheritance using folders already in hand.
