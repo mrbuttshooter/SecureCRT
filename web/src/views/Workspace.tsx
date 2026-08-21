@@ -82,6 +82,7 @@ export function Workspace({ active }: { active: boolean }) {
   const [recency, setRecency] = useState<string[]>([])
   const nextKey = useRef(0)
   const restored = useRef(false)
+  const filterInput = useRef<HTMLInputElement>(null)
 
   const focusTab = useCallback((key: string) => {
     setActiveKey(key)
@@ -324,6 +325,11 @@ export function Workspace({ active }: { active: boolean }) {
           setQuickFocus((n) => n + 1)
           if (!prefs.tree) setPrefs((p) => ({ ...p, tree: true }))
           break
+        case 'filter':
+          event.preventDefault()
+          if (!prefs.tree) setPrefs((p) => ({ ...p, tree: true }))
+          window.setTimeout(() => filterInput.current?.focus(), 0)
+          break
         case 'close-tab':
           if (activeKey) { event.preventDefault(); void closeTab(activeKey) }
           break
@@ -406,6 +412,7 @@ export function Workspace({ active }: { active: boolean }) {
             onTreeChanged={() => void loadTree()}
           />
           <input
+            ref={filterInput}
             className="filter"
             aria-label="Filter connections"
             placeholder="Filter by name, host or user"

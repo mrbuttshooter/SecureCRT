@@ -297,6 +297,8 @@ export function TerminalPane(props: TerminalPaneProps) {
         setMenu((m) => (m === 'broadcast' ? 'none' : 'broadcast'))
         return false
       }
+      // Everything else is claimed from xterm and left to bubble up to the
+      // workspace's listener, which owns tabs and the sidebar.
       return false
     })
 

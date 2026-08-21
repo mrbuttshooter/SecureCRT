@@ -13,6 +13,7 @@
  *   Ctrl+Shift+D        duplicate the active tab
  *   Ctrl+Shift+F        find in scrollback (per pane)
  *   Ctrl+Shift+B        broadcast menu (per pane)
+ *   Ctrl+Shift+K        focus the connection filter
  *
  * Alt+<letter> is left strictly alone: xterm sends it as an ESC-prefixed
  * sequence, and Alt+B / Alt+F / Alt+. are readline muscle memory that a
@@ -34,6 +35,7 @@ export type AppCommand =
   | { kind: 'duplicate-tab' }
   | { kind: 'find' }
   | { kind: 'broadcast' }
+  | { kind: 'filter' }
 
 /** commandFor maps a keydown to an app command, or null to leave it alone. */
 export function commandFor(event: KeyboardEvent): AppCommand | null {
@@ -54,6 +56,9 @@ export function commandFor(event: KeyboardEvent): AppCommand | null {
       case 'KeyD': return { kind: 'duplicate-tab' }
       case 'KeyF': return { kind: 'find' }
       case 'KeyB': return { kind: 'broadcast' }
+      // The SecureCRT reflex: jump to the session filter and type part of a
+      // hostname. Their Alt+K, our Ctrl+Shift+K.
+      case 'KeyK': return { kind: 'filter' }
     }
   }
 
