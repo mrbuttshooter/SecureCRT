@@ -330,7 +330,12 @@ export function FilePane(props: FilePaneProps) {
       {error && <div className="error">{error}</div>}
 
       {!session && !loading && !prompt && (
-        <p className="muted file-empty">Choose a connection to browse its files.</p>
+        <div className="file-empty">
+          <p className="muted">Choose a connection to browse its files.</p>
+          <span className="drop-hint muted">
+            Files dropped here upload to the connected host
+          </span>
+        </div>
       )}
 
       {loading && <p className="muted file-empty">Loading…</p>}

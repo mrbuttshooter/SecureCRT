@@ -85,11 +85,11 @@ export function Credentials() {
                   {c.username && <div className="muted">username: {c.username}</div>}
                   {c.fingerprint && <div className="mono">{c.fingerprint}</div>}
                   <div className="muted">
-                    added {new Date(c.created_at).toLocaleDateString()}
-                    {c.last_used_at && <> · last used {new Date(c.last_used_at).toLocaleDateString()}</>}
+                    added {isoDate(c.created_at)}
+                    {c.last_used_at && <> · last used {isoDate(c.last_used_at)}</>}
                   </div>
                 </div>
-                <button className="danger" onClick={() => void remove(c)}>Delete</button>
+                <button className="link danger" onClick={() => void remove(c)}>Delete</button>
               </div>
               {c.public_key && (
                 <details>
@@ -332,4 +332,11 @@ function AddPassword({ onDone, onCancel }: {
       </form>
     </section>
   )
+}
+
+/** Dates for people who read router logs: ISO, not locale roulette. */
+function isoDate(v: string): string {
+  const d = new Date(v)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }

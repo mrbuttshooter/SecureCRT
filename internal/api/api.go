@@ -302,6 +302,8 @@ func (a *API) Routes() http.Handler {
 		"DELETE /api/teams/{id}/members/{user}",
 		"PUT /api/tree/folders/{id}/credential",
 		"GET /api/admin/users", "GET /api/admin/terminals", "GET /api/admin/audit",
+		"DELETE /api/admin/terminals/{id}",
+		"GET /api/admin/transcripts", "GET /api/admin/transcripts/{user}/{name}",
 		"GET /api/known-hosts", "DELETE /api/known-hosts/{id}",
 
 		"GET /api/files/sessions", "POST /api/files/sessions",
@@ -469,6 +471,21 @@ func (a *API) routeAuthenticated(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.handleAdminTerminals(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/api/admin/terminals/"):
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleAdminCloseTerminal(w, r)
+	case r.Method == http.MethodGet && path == "/api/admin/transcripts":
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleAdminListTranscripts(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/admin/transcripts/"):
+		if !a.adminGate(w, r) {
+			return
+		}
+		a.handleAdminDownloadTranscript(w, r)
 	case r.Method == http.MethodGet && path == "/api/admin/audit":
 		if !a.adminGate(w, r) {
 			return

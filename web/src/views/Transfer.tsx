@@ -29,7 +29,7 @@ export function Transfer() {
   }
 
   return (
-    <section className="transfer">
+    <section className="portability">
       {error && (
         <div className="error">
           {error} <button className="link" onClick={() => setError(null)}>Dismiss</button>

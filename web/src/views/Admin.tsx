@@ -3,17 +3,19 @@ import {
   ApiError, api,
   type AdminTerminal, type AuditEvent, type Team, type TeamMember,
 } from '../api'
+import { TranscriptViewer } from './TranscriptViewer'
 
 /**
- * Admin is the operator's room: who is connected right now, the audit trail,
- * and the teams that drive the shared tree. Every panel here reads data the
- * server already had — this is the window that was missing, not new tracking.
+ * Admin is the operator's room: who is connected right now, every recording,
+ * the audit trail, and the teams that drive the shared tree. Every panel
+ * reads data the server already had — this is the window that was missing,
+ * not new tracking.
  *
  * Reachable only by administrators; the tab that opens it is rendered only
  * for them, and every endpoint behind it is gated server-side regardless.
  */
 export function Admin() {
-  const [panel, setPanel] = useState<'live' | 'teams' | 'audit'>('live')
+  const [panel, setPanel] = useState<'live' | 'transcripts' | 'audit' | 'teams'>('live')
 
   return (
     <section>
@@ -24,17 +26,32 @@ export function Admin() {
       <nav className="subtabs">
         <button aria-current={panel === 'live' ? 'page' : undefined}
                 onClick={() => setPanel('live')}>Live sessions</button>
-        <button aria-current={panel === 'teams' ? 'page' : undefined}
-                onClick={() => setPanel('teams')}>Teams</button>
+        <button aria-current={panel === 'transcripts' ? 'page' : undefined}
+                onClick={() => setPanel('transcripts')}>Transcripts</button>
         <button aria-current={panel === 'audit' ? 'page' : undefined}
                 onClick={() => setPanel('audit')}>Audit log</button>
+        <button aria-current={panel === 'teams' ? 'page' : undefined}
+                onClick={() => setPanel('teams')}>Teams</button>
       </nav>
 
       {panel === 'live' && <LiveSessions />}
-      {panel === 'teams' && <Teams />}
+      {panel === 'transcripts' && <AdminTranscripts />}
       {panel === 'audit' && <AuditLog />}
+      {panel === 'teams' && <Teams />}
     </section>
   )
+}
+
+/** duration renders "2h 14m" from a start time — the question SINCE never answered. */
+function duration(from: string): string {
+  const ms = Date.now() - new Date(from).getTime()
+  if (ms < 0) return '—'
+  const mins = Math.floor(ms / 60_000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ${mins % 60}m`
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`
 }
 
 function LiveSessions() {
@@ -58,36 +75,274 @@ function LiveSessions() {
     return () => window.clearInterval(id)
   }, [load])
 
+  const terminate = async (t: AdminTerminal) => {
+    if (!window.confirm(
+      `End ${t.user_email}'s session on ${t.host || t.device}? Their terminal closes immediately.`)) return
+    try {
+      await api.delete(`/api/admin/terminals/${t.id}`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   if (error) return <div className="error">{error}</div>
   if (rows === null) return <p className="muted">Loading…</p>
-  if (rows.length === 0) return <div className="card"><p>Nobody is connected right now.</p></div>
+  if (rows.length === 0) {
+    return (
+      <div className="card">
+        <p>Nobody is connected right now.</p>
+        <p className="muted">This list refreshes every five seconds.</p>
+      </div>
+    )
+  }
 
   return (
     <table className="grid">
       <thead>
-        <tr><th>User</th><th>Where</th><th>Protocol</th><th>Since</th><th>State</th></tr>
+        <tr>
+          <th>User</th><th>Where</th><th>Protocol</th>
+          <th>Connected for</th><th>State</th><th aria-label="Actions"></th>
+        </tr>
       </thead>
       <tbody>
         {rows.map((t) => (
           <tr key={t.id}>
-            <td>{t.user_email}</td>
-            <td className="mono">{t.host || t.device}{t.port ? `:${t.port}` : ''}</td>
-            <td>
+            <td className="nowrap">{t.user_email}</td>
+            <td className="mono nowrap">{t.host || t.device}{t.port ? `:${t.port}` : ''}</td>
+            <td className="nowrap">
               {t.protocol}
               {!t.encrypted && <> <span className="tag warn-tag">clear</span></>}
               {t.recorded && <> <span className="tag warn-tag">rec</span></>}
             </td>
-            <td>{new Date(t.created_at).toLocaleTimeString()}</td>
-            <td>
+            <td className="nowrap">{duration(t.created_at)}</td>
+            <td className="nowrap">
               <span className={'pill pill-' + (t.closed ? 'ended' : 'live')}>
-                {t.closed ? 'ended' : t.attached ? 'attached' : 'detached'}
+                {t.closed ? 'ended' : t.attached ? 'in use' : 'background'}
               </span>
+            </td>
+            <td className="nowrap">
+              {!t.closed && (
+                <button className="link danger" onClick={() => void terminate(t)}>
+                  Terminate
+                </button>
+              )}
             </td>
           </tr>
         ))}
       </tbody>
     </table>
   )
+}
+
+interface AdminTranscriptRow {
+  user_id: string
+  user_email: string
+  name: string
+  size: number
+  modified: string
+}
+
+function AdminTranscripts() {
+  const [rows, setRows] = useState<AdminTranscriptRow[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<AdminTranscriptRow | null>(null)
+
+  useEffect(() => {
+    void api
+      .get<{ transcripts: AdminTranscriptRow[] }>('/api/admin/transcripts')
+      .then((r) => setRows(r.transcripts ?? []))
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err))
+        setRows([])
+      })
+  }, [])
+
+  if (error) return <div className="error">{error}</div>
+  if (rows === null) return <p className="muted">Loading…</p>
+  if (rows.length === 0) {
+    return (
+      <div className="card">
+        <p>No recordings yet, from anyone.</p>
+        <p className="muted">
+          Sessions are recorded when a user presses Record, when a connection
+          has "keep a transcript" set, or — for every session — when
+          record_all_sessions is enabled in this server's policy.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <p className="muted">
+        Opening a transcript is itself recorded in the audit log.
+      </p>
+      <table className="grid">
+        <thead>
+          <tr><th>User</th><th>Recorded</th><th>Session</th><th>Size</th><th aria-label="Actions"></th></tr>
+        </thead>
+        <tbody>
+          {rows.map((t) => (
+            <tr key={t.user_id + t.name}>
+              <td className="nowrap">{t.user_email}</td>
+              <td className="nowrap">{isoTime(t.modified)}</td>
+              <td className="mono">{sessionFrom(t.name)}</td>
+              <td className="nowrap">{formatSize(t.size)}</td>
+              <td className="nowrap">
+                <button className="link" onClick={() => setViewing(t)}>View</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {viewing && (
+        <TranscriptViewer
+          url={`/api/admin/transcripts/${encodeURIComponent(viewing.user_id)}/${encodeURIComponent(viewing.name)}`}
+          title={`${viewing.user_email} · ${sessionFrom(viewing.name)}`}
+          onClose={() => setViewing(null)}
+        />
+      )}
+    </>
+  )
+}
+
+/** The connection name buried in a transcript filename, for humans. */
+function sessionFrom(name: string): string {
+  return name.replace(/^[0-9]{8}-[0-9]{6}-/, '').replace(/[.]log$/, '')
+}
+
+function isoTime(v: string): string {
+  const d = new Date(v)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+}
+
+interface RosterUser {
+  id: string
+  email: string
+}
+
+function AuditLog() {
+  const [events, setEvents] = useState<AuditEvent[] | null>(null)
+  const [actions, setActions] = useState<string[]>([])
+  const [roster, setRoster] = useState<RosterUser[]>([])
+  const [action, setAction] = useState('')
+  const [actor, setActor] = useState('')
+  const [since, setSince] = useState('')
+  const [nextUntil, setNextUntil] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async (until?: string) => {
+    try {
+      const params = new URLSearchParams()
+      if (action) params.set('action', action)
+      if (actor) params.set('actor', actor)
+      if (since) params.set('since', new Date(since).toISOString())
+      if (until) params.set('until', until)
+      const r = await api.get<{
+        events: AuditEvent[]; actions: string[] | null; next_until: string
+      }>('/api/admin/audit?' + params.toString())
+      setEvents((prev) => (until && prev ? [...prev, ...(r.events ?? [])] : r.events ?? []))
+      if (r.actions) setActions(r.actions)
+      setNextUntil(r.next_until ?? '')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setEvents([])
+    }
+  }, [action, actor, since])
+
+  useEffect(() => { void load() }, [load])
+
+  useEffect(() => {
+    void api
+      .get<{ users: RosterUser[] }>('/api/admin/users')
+      .then((r) => setRoster(r.users ?? []))
+      .catch(() => setRoster([]))
+  }, [])
+
+  const exportCSV = () => {
+    if (!events?.length) return
+    const head = 'occurred_at,actor,action,target,ip,outcome'
+    const lines = events.map((e) => [
+      e.occurred_at, e.actor_email, e.action,
+      (e.target_label || e.target_id).replaceAll(',', ' '),
+      e.ip, e.outcome,
+    ].join(','))
+    const blob = new Blob([head + '\n' + lines.join('\n')], { type: 'text/csv' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'bridgekeeper-audit.csv'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  return (
+    <>
+      {error && <div className="error">{error}</div>}
+      <div className="row audit-filters">
+        <select value={actor} onChange={(e) => setActor(e.target.value)}
+                aria-label="Filter by user">
+          <option value="">Everyone</option>
+          {roster.map((u) => (
+            <option key={u.id} value={u.id}>{u.email}</option>
+          ))}
+        </select>
+        <select value={action} onChange={(e) => setAction(e.target.value)}
+                aria-label="Filter by action">
+          <option value="">Every action</option>
+          {actions.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+        <input type="date" value={since} aria-label="From date"
+               onChange={(e) => setSince(e.target.value)} />
+        <button onClick={() => exportCSV()} disabled={!events?.length}>Export CSV</button>
+      </div>
+
+      {events === null && <p className="muted">Loading…</p>}
+      {events?.length === 0 && <div className="card"><p>No matching events.</p></div>}
+      {events && events.length > 0 && (
+        <>
+          <table className="grid audit-table">
+            <thead>
+              <tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>From</th></tr>
+            </thead>
+            <tbody>
+              {events.map((e) => (
+                <tr key={e.id}>
+                  <td className="nowrap">{isoTime(e.occurred_at)}</td>
+                  <td className="nowrap">{e.actor_email}</td>
+                  <td className="mono nowrap">{e.action}</td>
+                  <td>{e.target_label || shortID(e.target_id)}</td>
+                  <td className="mono nowrap">{e.ip}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {nextUntil && (
+            <p>
+              <button className="link" onClick={() => void load(nextUntil)}>
+                Load older events
+              </button>
+            </p>
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
+/** A UUID nobody resolved still should not eat a table column. */
+function shortID(id: string): string {
+  return id.length > 12 ? id.slice(0, 8) + '…' : id
 }
 
 function Teams() {
@@ -134,7 +389,7 @@ function Teams() {
     <>
       {error && <div className="error">{error}</div>}
 
-      <form className="row" onSubmit={(e) => void create(e)}>
+      <form className="row team-create" onSubmit={(e) => void create(e)}>
         <input placeholder="New team name" value={name}
                onChange={(e) => setName(e.target.value)} />
         <button className="primary" type="submit" disabled={!name.trim()}>Create team</button>
@@ -236,56 +491,5 @@ function TeamMembers({ teamId, onChanged }: { teamId: string; onChanged: () => P
         </ul>
       )}
     </div>
-  )
-}
-
-function AuditLog() {
-  const [events, setEvents] = useState<AuditEvent[] | null>(null)
-  const [action, setAction] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  const load = useCallback(async () => {
-    try {
-      const query = action ? `?action=${encodeURIComponent(action)}` : ''
-      const r = await api.get<{ events: AuditEvent[] }>('/api/admin/audit' + query)
-      setEvents(r.events ?? [])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      setEvents([])
-    }
-  }, [action])
-
-  useEffect(() => { void load() }, [load])
-
-  return (
-    <>
-      {error && <div className="error">{error}</div>}
-      <form className="row" onSubmit={(e) => { e.preventDefault(); void load() }}>
-        <input placeholder="Filter by action, e.g. terminal.connected"
-               value={action} onChange={(e) => setAction(e.target.value)} />
-        <button type="submit">Search</button>
-      </form>
-
-      {events === null && <p className="muted">Loading…</p>}
-      {events?.length === 0 && <div className="card"><p>No matching events.</p></div>}
-      {events && events.length > 0 && (
-        <table className="grid">
-          <thead>
-            <tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>From</th></tr>
-          </thead>
-          <tbody>
-            {events.map((e) => (
-              <tr key={e.id}>
-                <td>{new Date(e.occurred_at).toLocaleString()}</td>
-                <td>{e.actor_email}</td>
-                <td className="mono">{e.action}</td>
-                <td>{e.target_label || e.target_id}</td>
-                <td className="mono">{e.ip}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </>
   )
 }

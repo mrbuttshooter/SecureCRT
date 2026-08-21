@@ -52,7 +52,11 @@ func (a *API) handleDownloadTranscript(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = file.Close() }()
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	// ?view=1 renders inline, for the in-browser viewer; the default stays a
+	// download so existing links keep their behaviour.
+	if r.URL.Query().Get("view") != "1" {
+		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	}
 	if _, err := io.Copy(w, file); err != nil {
 		// The response is already streaming; all that is left is to log.
 		a.log.Debug("streaming a transcript", "error", err)

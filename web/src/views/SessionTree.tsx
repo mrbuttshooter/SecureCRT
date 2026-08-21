@@ -137,7 +137,9 @@ export function SessionTree(props: SessionTreeProps) {
           {props.liveSessionIds.has(s.id) ? '●' : '○'}
         </span>
         <span className="tree-name">{s.name}</span>
-        <span className="tree-host muted">{s.hostname}</span>
+        {!s.name.includes(s.hostname) && (
+          <span className="tree-host muted">{s.hostname}</span>
+        )}
       </button>
       <button
         className="link tree-action"

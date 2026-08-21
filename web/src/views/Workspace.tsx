@@ -75,6 +75,7 @@ export function Workspace({ active }: { active: boolean }) {
   const [error, setError] = useState<string | null>(null)
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; key: string } | null>(null)
+  const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number } | null>(null)
   // Ctrl+click multi-selection in the tree, for bulk connect and delete.
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const dragTab = useRef<string | null>(null)
@@ -568,7 +569,18 @@ export function Workspace({ active }: { active: boolean }) {
                 setPanel({ kind: 'session', session: selected, folderId: selected.folder_id })}>
                 Edit
               </button>
-              <button className="danger" onClick={() => void deleteSession(selected)}>Delete</button>
+              <button
+                className="overflow"
+                aria-label={`More actions for ${selected.name}`}
+                title="More actions"
+                onClick={(e) => {
+                  const r = (e.target as HTMLElement).getBoundingClientRect()
+                  setTabMenu(null)
+                  setSelectionMenu({ x: r.left, y: r.bottom + 4 })
+                }}
+              >
+                {'\u22ef'}
+              </button>
             </div>
           </div>
         )}
@@ -765,6 +777,19 @@ export function Workspace({ active }: { active: boolean }) {
           y={tabMenu.y}
           items={tabMenuItems(tabMenu.key)}
           onClose={() => setTabMenu(null)}
+        />
+      )}
+
+      {selectionMenu && selected && (
+        <ContextMenu
+          x={selectionMenu.x}
+          y={selectionMenu.y}
+          items={[{
+            label: `Delete \u201c${selected.name}\u201d\u2026`,
+            danger: true,
+            onClick: () => void deleteSession(selected),
+          }]}
+          onClose={() => setSelectionMenu(null)}
         />
       )}
 

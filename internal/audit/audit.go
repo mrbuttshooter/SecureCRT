@@ -366,6 +366,28 @@ type Query struct {
 	Limit   int
 }
 
+// Actions returns every distinct action present in the log, for a filter
+// dropdown that offers what exists rather than expecting the schema to be
+// memorised.
+func (r *Recorder) Actions(ctx context.Context) ([]string, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT DISTINCT action FROM audit_events ORDER BY action ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("audit: list actions: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only query
+
+	var out []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, fmt.Errorf("audit: scan action: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // List returns matching events, newest first.
 func (r *Recorder) List(ctx context.Context, q Query) ([]Event, error) {
 	sql := `SELECT id, occurred_at, actor_id, actor_email, ip_address,

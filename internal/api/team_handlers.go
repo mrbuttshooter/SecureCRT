@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mrbuttshooter/securecrt/internal/audit"
 	"github.com/mrbuttshooter/securecrt/internal/sessions"
 	"github.com/mrbuttshooter/securecrt/internal/teams"
+	"github.com/mrbuttshooter/securecrt/internal/terminal"
 	"github.com/mrbuttshooter/securecrt/internal/users"
 )
 
@@ -297,6 +301,11 @@ func (a *API) handleAdminTerminals(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAdminAudit searches the audit trail.
+//
+// The answer to "what did Dave do last Tuesday" has to be reachable by
+// picking Dave and Tuesday, not by knowing the event schema: the response
+// carries the distinct actions for a dropdown, accepts a date range, and
+// pages by time so the trail stays walkable however long it grows.
 func (a *API) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query := audit.Query{
@@ -307,6 +316,16 @@ func (a *API) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 	if query.Limit > 500 {
 		query.Limit = 500
 	}
+	if v := q.Get("since"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			query.Since = t
+		}
+	}
+	if v := q.Get("until"); v != "" {
+		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			query.Until = t
+		}
+	}
 
 	events, err := a.audit.List(r.Context(), query)
 	if err != nil {
@@ -314,8 +333,35 @@ func (a *API) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actions, err := a.audit.Actions(r.Context())
+	if err != nil {
+		actions = nil // the dropdown degrades; the list still renders
+	}
+
+	// Raw identifiers resolve to people before they reach a human: an
+	// auditor reading UUIDs is an auditor who gives up.
+	emails := a.userEmails(r.Context())
+
 	out := make([]map[string]any, 0, len(events))
 	for _, e := range events {
+		detail := e.Detail
+		if id, ok := detail["member_id"].(string); ok {
+			if email, found := emails[id]; found {
+				clone := make(map[string]any, len(detail))
+				for k, v := range detail {
+					clone[k] = v
+				}
+				clone["member"] = email
+				delete(clone, "member_id")
+				detail = clone
+			}
+		}
+		label := e.TargetLabel
+		if label == "" {
+			if email, found := emails[e.TargetID]; found {
+				label = email
+			}
+		}
 		out = append(out, map[string]any{
 			"id":           e.ID,
 			"occurred_at":  e.OccurredAt,
@@ -326,12 +372,125 @@ func (a *API) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 			"severity":     string(e.Severity),
 			"target_type":  e.TargetType,
 			"target_id":    e.TargetID,
-			"target_label": e.TargetLabel,
+			"target_label": label,
 			"outcome":      string(e.Outcome),
-			"detail":       e.Detail,
+			"detail":       detail,
 		})
 	}
-	writeJSON(w, a.log, http.StatusOK, map[string]any{"events": out})
+
+	// Time-cursor pagination: ask again with until = just before the oldest
+	// row returned.
+	var nextUntil string
+	if len(events) == query.Limit && query.Limit > 0 {
+		nextUntil = events[len(events)-1].OccurredAt.Add(-time.Nanosecond).UTC().Format(time.RFC3339Nano)
+	}
+
+	writeJSON(w, a.log, http.StatusOK, map[string]any{
+		"events":     out,
+		"actions":    actions,
+		"next_until": nextUntil,
+	})
+}
+
+// userEmails is the id-to-email map the admin views lean on.
+func (a *API) userEmails(ctx context.Context) map[string]string {
+	roster, err := a.users.List(ctx, 500)
+	if err != nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(roster))
+	for _, one := range roster {
+		out[one.ID] = one.Email
+	}
+	return out
+}
+
+// handleAdminListTranscripts is every user's recordings, newest first — the
+// other half of "what did Dave do last Tuesday".
+func (a *API) handleAdminListTranscripts(w http.ResponseWriter, r *http.Request) {
+	list, err := terminal.ListAllTranscripts(a.connector.SessionLogDir())
+	if err != nil {
+		writeInternal(w, a.log, "listing transcripts", err)
+		return
+	}
+	emails := a.userEmails(r.Context())
+	out := make([]map[string]any, 0, len(list))
+	for _, t := range list {
+		email := emails[t.UserDir]
+		if email == "" {
+			email = t.UserDir
+		}
+		out = append(out, map[string]any{
+			"user_id":    t.UserDir,
+			"user_email": email,
+			"name":       t.Name,
+			"size":       t.Size,
+			"modified":   t.Modified,
+		})
+	}
+	writeJSON(w, a.log, http.StatusOK, map[string]any{"transcripts": out})
+}
+
+// handleAdminDownloadTranscript streams any user's transcript to an admin.
+func (a *API) handleAdminDownloadTranscript(w http.ResponseWriter, r *http.Request) {
+	u, _ := UserFrom(r.Context())
+
+	rest := strings.TrimPrefix(r.URL.Path, "/api/admin/transcripts/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" ||
+		strings.Contains(parts[1], "/") {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, "No transcript was specified.")
+		return
+	}
+	userDir, name := parts[0], parts[1]
+
+	file, err := terminal.OpenTranscriptFile(a.connector.SessionLogDir(), userDir, name)
+	if err != nil {
+		writeError(w, a.log, http.StatusNotFound, CodeNotFound, "No such transcript.")
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	// An administrator reading someone's session leaves a record of its own.
+	a.audit.Record(r.Context(), audit.Event{
+		ActorID: u.ID, ActorEmail: u.Email, IPAddress: a.clientIP(r),
+		Action: "transcript.read", TargetType: "transcript", TargetID: name,
+		Detail: map[string]any{"of_user": userDir},
+	})
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if r.URL.Query().Get("view") != "1" {
+		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	}
+	if _, err := io.Copy(w, file); err != nil {
+		a.log.Debug("streaming a transcript", "error", err)
+	}
+}
+
+// handleAdminCloseTerminal ends any user's terminal — the operator's kill
+// switch for a session that should not be running.
+func (a *API) handleAdminCloseTerminal(w http.ResponseWriter, r *http.Request) {
+	u, _ := UserFrom(r.Context())
+
+	id := pathID(r.URL.Path, "/api/admin/terminals/")
+	if id == "" {
+		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, "No terminal was specified.")
+		return
+	}
+
+	ownerID, err := a.terminals.CloseAny(id)
+	if err != nil {
+		writeError(w, a.log, http.StatusNotFound, CodeNotFound, "No such terminal.")
+		return
+	}
+
+	a.audit.Record(r.Context(), audit.Event{
+		ActorID: u.ID, ActorEmail: u.Email, IPAddress: a.clientIP(r),
+		Action: "terminal.closed.by_admin", Severity: audit.SeverityNotice,
+		TargetType: "terminal", TargetID: id,
+		Detail: map[string]any{"owner": a.userEmails(r.Context())[ownerID]},
+	})
+	writeJSON(w, a.log, http.StatusOK, map[string]any{"closed": true})
 }
 
 // Compile-time check that the user type this file leans on stays compatible.

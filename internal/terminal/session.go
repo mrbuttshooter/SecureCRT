@@ -747,6 +747,22 @@ func (m *Manager) OpenCount() int {
 	return n
 }
 
+// CloseAny ends a terminal regardless of owner — the administrator's verb.
+// Authorisation is the caller's business; the API gates it behind admin.
+func (m *Manager) CloseAny(terminalID string) (ownerID string, err error) {
+	m.mu.Lock()
+	t, ok := m.terminals[terminalID]
+	if ok {
+		delete(m.terminals, terminalID)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return "", ErrTerminalNotFound
+	}
+	t.close(errors.New("terminal: ended by an administrator"))
+	return t.UserID, nil
+}
+
 // ListAll returns every live terminal, for the administrator's view.
 //
 // The same shape ListForUser returns, unfiltered. Authorisation is the

@@ -204,9 +204,8 @@ export function Files() {
       )}
 
       <p className="muted files-hint">
-        Drag files from your computer onto a pane to upload them. Drag between
-        panes to copy from one host straight to the other — the bytes go host
-        to host and never touch your machine.
+        Drag files onto a pane to upload, or between panes to copy host to
+        host directly.
       </p>
 
       <div className="file-panes">

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+
+type Theme = 'dark' | 'light' | 'system'
 import { ApiError, api, type AuthConfig, type Whoami } from './api'
 import { Brand } from './Brand'
 import { SignIn } from './views/SignIn'
@@ -34,6 +36,24 @@ export function App() {
   const [loading, setLoading] = useState(true)
   const [fatal, setFatal] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('terminal')
+
+  // The app defaults to dark: its centrepiece is a black terminal, and eight
+  // hours of one inside a bright white frame is an eyestrain complaint. The
+  // toggle cycles dark, light, and following the OS; the choice sticks.
+  const [theme, setTheme] = useState<Theme>(() => {
+    const stored = window.localStorage.getItem('bkd.theme')
+    return stored === 'light' || stored === 'system' ? stored : 'dark'
+  })
+  useEffect(() => {
+    const root = document.documentElement
+    if (theme === 'system') root.removeAttribute('data-theme')
+    else root.setAttribute('data-theme', theme)
+    window.localStorage.setItem('bkd.theme', theme)
+  }, [theme])
+  const cycleTheme = () =>
+    setTheme((t) => (t === 'dark' ? 'light' : t === 'light' ? 'system' : 'dark'))
+  const themeGlyph = theme === 'dark' ? '\u263e' : theme === 'light' ? '\u2600' : 'auto'
+
 
   const refresh = useCallback(async () => {
     try {
@@ -130,7 +150,7 @@ export function App() {
         <button aria-current={tab === 'transfer' ? 'page' : undefined}
                 onClick={() => setTab('transfer')}>Import / export</button>
         <button aria-current={tab === 'sessions' ? 'page' : undefined}
-                onClick={() => setTab('sessions')}>Signed in</button>
+                onClick={() => setTab('sessions')}>Sign-ins</button>
         <button aria-current={tab === 'security' ? 'page' : undefined}
                 onClick={() => setTab('security')}>Security</button>
         {me.user.is_admin && (
@@ -144,6 +164,10 @@ export function App() {
           {me.user.sso && <span className="tag">sso</span>}
         </div>
         <div className="row">
+          <button className="theme-toggle" onClick={cycleTheme}
+                  title={'Theme: ' + theme + ' \u2014 click to change'}>
+            {themeGlyph}
+          </button>
           <button onClick={() => void api.post('/api/vault/lock').then(refresh)}>
             Lock vault
           </button>

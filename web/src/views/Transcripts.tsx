@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api } from '../api'
+import { TranscriptViewer } from './TranscriptViewer'
 
 interface TranscriptInfo {
   name: string
@@ -19,6 +20,7 @@ interface TranscriptInfo {
 export function Transcripts() {
   const [list, setList] = useState<TranscriptInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<TranscriptInfo | null>(null)
 
   useEffect(() => {
     void api
@@ -56,7 +58,7 @@ export function Transcripts() {
         <table className="grid">
           <thead>
             <tr>
-              <th>Transcript</th>
+              <th>Session</th>
               <th>Recorded</th>
               <th>Size</th>
               <th aria-label="Actions"></th>
@@ -65,10 +67,12 @@ export function Transcripts() {
           <tbody>
             {list.map((t) => (
               <tr key={t.name}>
-                <td className="mono">{t.name}</td>
-                <td>{new Date(t.modified).toLocaleString()}</td>
-                <td>{formatSize(t.size)}</td>
-                <td>
+                <td className="mono">{sessionFrom(t.name)}</td>
+                <td className="nowrap">{isoTime(t.modified)}</td>
+                <td className="nowrap">{formatSize(t.size)}</td>
+                <td className="nowrap">
+                  <button className="link" onClick={() => setViewing(t)}>View</button>
+                  {' '}
                   <a className="link" href={`/api/transcripts/${encodeURIComponent(t.name)}`}>
                     Download
                   </a>
@@ -78,8 +82,27 @@ export function Transcripts() {
           </tbody>
         </table>
       )}
+
+      {viewing && (
+        <TranscriptViewer
+          url={`/api/transcripts/${encodeURIComponent(viewing.name)}`}
+          title={sessionFrom(viewing.name)}
+          onClose={() => setViewing(null)}
+        />
+      )}
     </section>
   )
+}
+
+/** The connection name buried in a transcript filename, for humans. */
+function sessionFrom(name: string): string {
+  return name.replace(/^[0-9]{8}-[0-9]{6}-/, '').replace(/[.]log$/, '')
+}
+
+function isoTime(v: string): string {
+  const d = new Date(v)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function formatSize(bytes: number): string {

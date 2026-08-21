@@ -462,6 +462,7 @@ export function TerminalPane(props: TerminalPaneProps) {
           terminalId={terminalId}
           terminals={props.otherTerminals}
           dims={dims}
+          label={props.label}
         />
         {state === 'ended' && canReconnect && (
           <button className="link" onClick={reconnect}>Reconnect</button>
@@ -697,19 +698,22 @@ function StatusPill({ state, detail }: { state: LinkState; detail: string }) {
  * state already in the browser — the live-terminals list the workspace polls
  * and the xterm instance itself — so it costs no extra request.
  */
-function PaneFacts({ terminalId, terminals, dims }: {
+function PaneFacts({ terminalId, terminals, dims, label }: {
   terminalId: string
   terminals: LiveTerminal[]
   dims: { cols: number; rows: number } | null
+  label: string
 }) {
   const info = terminals.find((t) => t.id === terminalId)
+  const where = info
+    ? `${info.username ? info.username + '@' : ''}${info.host}${info.port ? ':' + info.port : ''}`
+    : ''
   return (
     <span className="pane-facts">
-      {info && (
-        <span className="mono">
-          {info.username ? `${info.username}@` : ''}{info.host}
-          {info.port ? `:${info.port}` : ''}
-        </span>
+      {/* Shown only when it adds something the tab label does not already
+          say — the host was rendered five times on one screen once. */}
+      {info && !label.includes(info.host) && (
+        <span className="mono">{where}</span>
       )}
       {info && !info.encrypted && (
         <span className="tag warn-tag" title="This protocol sends everything, including passwords, in the clear">

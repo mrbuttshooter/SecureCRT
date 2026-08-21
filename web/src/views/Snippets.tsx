@@ -88,7 +88,7 @@ export function Snippets() {
       ) : (
         <table className="grid" data-testid="snippet-list">
           <thead>
-            <tr><th>Name</th><th>Command</th><th>Asks for</th><th /></tr>
+            <tr><th>Name</th><th>Command</th><th>Variables</th><th /></tr>
           </thead>
           <tbody>
             {items.map((snippet) => (
@@ -102,12 +102,14 @@ export function Snippets() {
                 <td><pre className="snippet-body">{snippet.body}</pre></td>
                 <td>
                   {snippet.parameters.length === 0
-                    ? <span className="muted">nothing</span>
+                    ? <span className="muted">{'\u2014'}</span>
                     : snippet.parameters.map((p) => <code key={p}>{p} </code>)}
                 </td>
-                <td className="row">
+                <td className="nowrap actions-cell">
                   <button onClick={() => setEditing(snippet)}>Edit</button>
-                  <button className="danger" onClick={() => void remove(snippet)}>Delete</button>
+                  <button className="link danger" onClick={() => void remove(snippet)}>
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))}

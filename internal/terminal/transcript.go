@@ -380,6 +380,43 @@ func ListTranscripts(dir, userID string) ([]TranscriptInfo, error) {
 	return out, nil
 }
 
+// UserTranscript is one transcript with the directory (user) it belongs to.
+type UserTranscript struct {
+	UserDir string `json:"user_dir"`
+	TranscriptInfo
+}
+
+// ListAllTranscripts walks every user's transcript directory, newest first —
+// the administrator's answer to "what did anyone do last Tuesday". UserDir is
+// the on-disk name, which is the user id; the caller maps it to an email.
+func ListAllTranscripts(dir string) ([]UserTranscript, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	users, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("terminal: listing transcript directories: %w", err)
+	}
+	var out []UserTranscript
+	for _, u := range users {
+		if !u.IsDir() {
+			continue
+		}
+		list, err := ListTranscripts(dir, u.Name())
+		if err != nil {
+			continue
+		}
+		for _, t := range list {
+			out = append(out, UserTranscript{UserDir: u.Name(), TranscriptInfo: t})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Modified.After(out[j].Modified) })
+	return out, nil
+}
+
 // OpenTranscriptFile opens one of a user's transcripts for reading.
 //
 // The open goes through a root scoped to the user's own directory, the same

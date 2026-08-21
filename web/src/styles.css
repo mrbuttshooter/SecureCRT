@@ -38,8 +38,11 @@
   --glow: none;
 }
 
+/* The dark tokens serve two masters: the OS preference, and an explicit
+   choice stored by the theme toggle. An explicit light choice beats a
+   dark OS; an explicit dark choice beats a light OS. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0d1117;
     --bg-deep: #090c10;
     --surface: #141a22;
@@ -60,6 +63,26 @@
     --glow: 0 0 0 1px rgba(45, 212, 168, 0.25), 0 0 18px rgba(45, 212, 168, 0.12);
   }
 }
+:root[data-theme="dark"] {
+    --bg: #0d1117;
+    --bg-deep: #090c10;
+    --surface: #141a22;
+    --surface-2: #1b232d;
+    --border: #232d38;
+    --border-strong: #33404e;
+    --text: #dbe4ec;
+    --muted: #8b97a5;
+    --accent: #2dd4a8;
+    --accent-soft: rgba(45, 212, 168, 0.09);
+    --accent-text: #06231b;
+    --danger: #ff8a80;
+    --danger-bg: #33201e;
+    --warn-bg: #2c2515;
+    --warn-border: #8f7526;
+    --ok: #4ade80;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
+    --glow: 0 0 0 1px rgba(45, 212, 168, 0.25), 0 0 18px rgba(45, 212, 168, 0.12);
+}
 
 * { box-sizing: border-box; }
 
@@ -72,16 +95,6 @@ body {
   color: var(--text);
   font: 15px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
-}
-
-/* Layered ground: a faint grid, the way graph paper sits behind an
-   instrument. Cheap — two repeating gradients — and invisible enough that
-   nobody will name it, but the page stops being a void. */
-body {
-  background-image:
-    linear-gradient(var(--bg-deep) 1px, transparent 1px),
-    linear-gradient(90deg, var(--bg-deep) 1px, transparent 1px);
-  background-size: 32px 32px;
 }
 
 ::selection { background: var(--accent); color: var(--accent-text); }
@@ -99,12 +112,12 @@ body {
 .centred { max-width: 26rem; margin: 12vh auto 3rem; padding: 0 1rem; }
 
 h1 {
-  font-family: var(--mono); font-weight: 600; letter-spacing: -0.01em;
+  font-weight: 600; letter-spacing: -0.01em;
   font-size: 1.3rem; margin: 0 0 0.25rem;
 }
 h2 {
-  font-family: var(--mono); font-weight: 600;
-  font-size: 1rem; margin: 0 0 0.75rem;
+  font-weight: 600;
+  font-size: 1.05rem; margin: 0 0 0.75rem;
 }
 p { margin: 0 0 0.75rem; }
 
@@ -173,8 +186,8 @@ nav.tabs::-webkit-scrollbar { display: none; }
 nav.tabs button {
   position: relative; flex: none;
   background: none; border: none; border-radius: 0;
-  padding: 0 0.55rem; cursor: pointer; color: var(--muted);
-  font-family: var(--mono); font-size: 0.84rem; letter-spacing: 0.01em;
+  padding: 0 0.6rem; cursor: pointer; color: var(--muted);
+  font-size: 0.9rem; font-weight: 500;
   white-space: nowrap;
   transition: color 120ms ease;
 }
@@ -196,7 +209,7 @@ nav.tabs button[aria-current="page"]::after {
 label { display: block; margin-bottom: 0.75rem; }
 label > span {
   display: block; margin-bottom: 0.3rem;
-  font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.02em;
+  font-size: 0.82rem; font-weight: 500;
   color: var(--muted);
 }
 
@@ -228,6 +241,12 @@ button.primary {
 button.primary:hover { box-shadow: var(--glow); }
 button.danger { color: var(--danger); }
 button:disabled { opacity: 0.55; cursor: not-allowed; box-shadow: none; }
+/* A disabled primary must not look like a washed-out variant of enabled —
+   it drops to plain grey, unmistakably inert. */
+button.primary:disabled {
+  background: var(--surface-2); border-color: var(--border);
+  color: var(--muted); opacity: 1;
+}
 
 .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
 .spread { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
@@ -247,7 +266,6 @@ ul.plain > li:last-child { border-bottom: none; }
 .tag {
   display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.45rem;
   border: 1px solid var(--border); border-radius: 999px; color: var(--muted);
-  font-family: var(--mono); letter-spacing: 0.02em;
 }
 
 .codes {
@@ -361,7 +379,7 @@ button.link.danger { color: var(--danger); }
   border-top: 1px solid var(--border); padding: 0.6rem; background: var(--surface-2);
 }
 .orphans h3, .selection h3 {
-  font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.02em;
+  font-size: 0.78rem; font-weight: 600;
   color: var(--muted); margin: 0 0 0.3rem;
 }
 
@@ -382,7 +400,7 @@ button.link.danger { color: var(--danger); }
 
 .open-tabs { border-bottom: 1px solid var(--border); padding: 0.5rem 0.6rem; }
 .open-tabs h3 {
-  font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.05em;
+  font-size: 0.72rem; letter-spacing: 0.05em; font-weight: 600;
   text-transform: uppercase; color: var(--muted); margin: 0 0 0.3rem;
 }
 .open-tabs ul.plain > li { border: none; padding: 0; }
@@ -607,7 +625,7 @@ label.inline > span { display: inline; margin: 0; font-family: var(--sans); font
   padding: 0.75rem; margin: 0 0 0.75rem;
 }
 .editor legend {
-  font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.02em;
+  font-size: 0.78rem; font-weight: 500;
   padding: 0 0.35rem; color: var(--muted);
 }
 
@@ -644,8 +662,8 @@ table.grid th, table.grid td {
   text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border);
 }
 table.grid th {
-  color: var(--muted); font-weight: 500;
-  font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.04em;
+  color: var(--muted); font-weight: 600;
+  font-size: 0.78rem; letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 
@@ -703,8 +721,8 @@ table.grid th {
 .file-header {
   position: sticky; top: 0; z-index: 1;
   background: var(--surface-2); border-bottom: 1px solid var(--border);
-  color: var(--muted); font-family: var(--mono); font-size: 0.72rem;
-  text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); font-size: 0.74rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
 }
 
 /* The button is a flex container, so the ellipsis has to live on a child:
@@ -749,7 +767,7 @@ table.grid th {
   max-height: 12rem; overflow: auto;
 }
 .transfers h3 {
-  font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.02em;
+  font-size: 0.78rem; font-weight: 600;
   color: var(--muted); margin: 0 0 0.4rem;
 }
 
@@ -781,19 +799,25 @@ table.grid th {
 /* --- import and export ------------------------------------------------------
 
    A form rather than a workspace, so it keeps the document layout the rest of
-   the settings screens use. */
+   the settings screens use.
 
-.transfer { max-width: 46rem; }
-.transfer h2 { margin-top: 0; }
-.transfer h3 { font-size: 0.95rem; margin: 0 0 0.5rem; }
-.transfer hr { margin: 2rem 0; }
+   Named .portability, NOT .transfer: the file browser's transfer-progress
+   rows own .transfer, and for one whole phase this page silently inherited
+   their four-column grid — which crammed the export form into a 12rem
+   column, truncated its labels, and misaligned the two halves. A class
+   collision wearing a broken layout's clothes. */
 
-.transfer .warn ul, .notes { margin: 0.4rem 0 0; padding-left: 1.2rem; }
-.transfer .warn li, .notes li { font-size: 0.88rem; margin-bottom: 0.25rem; }
+.portability { max-width: 46rem; }
+.portability h2 { margin-top: 0; }
+.portability h3 { font-size: 0.95rem; margin: 0 0 0.5rem; }
+.portability hr { margin: 2rem 0; }
+
+.portability .warn ul, .notes { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+.portability .warn li, .notes li { font-size: 0.88rem; margin-bottom: 0.25rem; }
 .notes { list-style: none; padding-left: 0; color: var(--muted); }
 .notes li::before { content: "— "; }
 
-.transfer input[type="file"] { border: none; padding: 0; }
+.portability input[type="file"] { border: none; padding: 0; }
 
 /* Snippets. The body is shown as written, because a snippet whose newlines
    are invisible is a snippet somebody will send with the lines run together. */
@@ -912,7 +936,7 @@ textarea.paste-preview {
 .subtabs button {
   background: none; border: 1px solid transparent; border-radius: var(--radius);
   padding: 0.3rem 0.7rem; cursor: pointer; color: var(--muted);
-  font-family: var(--mono); font-size: 0.82rem;
+  font-size: 0.88rem; font-weight: 500;
 }
 .subtabs button:hover { color: var(--text); }
 .subtabs button[aria-current="page"] {
@@ -921,3 +945,54 @@ textarea.paste-preview {
 
 .team-members { margin: 0.4rem 0 0.6rem; background: var(--surface-2); }
 .team-members .row { margin-bottom: 0.5rem; }
+
+/* --- review fixes: tables, status bar, theme toggle ------------------------ */
+
+/* An audit log that wraps an IP address mid-octet is disqualifying. Columns
+   that hold identifiers refuse to wrap; the table scrolls instead. */
+table.grid td.nowrap, table.grid th.nowrap { white-space: nowrap; }
+table.grid { table-layout: auto; }
+.audit-table td:nth-child(4) { overflow-wrap: anywhere; }
+.audit-filters { margin-bottom: 1rem; }
+.audit-filters select, .audit-filters input { width: auto; min-width: 10rem; }
+
+.transcript-title {
+  margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 0.95rem;
+}
+.transcript-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* The pane's action links read as separate controls, not one run-on word. */
+.pane-tools { gap: 0; }
+.pane-tools > * { padding: 0 0.55rem; }
+.pane-tools > * + * { border-left: 1px solid var(--border); }
+.rec-start {
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.05rem 0.5rem; font-size: 0.75rem;
+}
+.rec-start:hover { border-color: var(--danger); color: var(--danger); text-decoration: none; }
+
+/* The theme toggle in the header: one small control, three states. */
+.theme-toggle {
+  flex: none; padding: 0.32rem 0.55rem; font-size: 0.85rem;
+}
+
+/* The tree toggle earns a real affordance instead of an 8px sliver. */
+.tree-toggle {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 0.2rem 0.45rem; background: var(--surface);
+}
+
+/* Overflow menu trigger for demoted destructive actions. */
+button.overflow {
+  padding: 0.3rem 0.55rem; line-height: 1; font-weight: 700;
+}
+
+/* File panes advertise the drop before a file is over them. */
+.file-list { border: 2px dashed transparent; }
+.file-pane.drop-active .file-list { border-color: var(--accent); }
+.file-empty .drop-hint {
+  display: block; margin-top: 0.5rem; padding: 1.25rem;
+  border: 2px dashed var(--border); border-radius: var(--radius);
+  color: var(--muted); text-align: center;
+}
