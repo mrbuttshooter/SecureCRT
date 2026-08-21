@@ -996,3 +996,7 @@ button.overflow {
   border: 2px dashed var(--border); border-radius: var(--radius);
   color: var(--muted); text-align: center;
 }
+
+/* Row actions sit flush right and never overhang the table edge. */
+td.actions-cell { text-align: right; }
+td.actions-cell button + button, td.actions-cell button + a { margin-left: 0.5rem; }
