@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, api, type AuthConfig, type Whoami } from './api'
+import { Brand } from './Brand'
 import { SignIn } from './views/SignIn'
 import { MFAChallenge } from './views/MFAChallenge'
 import { VaultGate } from './views/VaultGate'
@@ -65,7 +66,7 @@ export function App() {
   if (fatal) {
     return (
       <main className="centred">
-        <h1>Bridgekeeper</h1>
+        <Brand />
         <div className="error">{fatal}</div>
         <p className="muted">
           The server may be unavailable. Reload once it is back.
@@ -100,25 +101,16 @@ export function App() {
   }
 
   return (
-    <main className={'shell' + (tab === 'terminal' || tab === 'files' ? ' shell-wide' : '')}>
+    <>
+      {/*
+        One bar carries everything: brand, navigation, who is signed in, and
+        the two session actions. It lives outside <main> so it spans the
+        window whatever width the page below it keeps. On the screen someone
+        lives in all day, the rows this saves are terminal rows.
+      */}
       <header className="bar">
-        <div>
-          <h1>Bridgekeeper</h1>
-          <p className="muted">
-            {me.user.display_name || me.user.email}
-            {me.user.is_admin && <> · <span className="tag">administrator</span></>}
-            {me.user.sso && <> · <span className="tag">single sign-on</span></>}
-          </p>
-        </div>
-        <div className="row">
-          <button onClick={() => void api.post('/api/vault/lock').then(refresh)}>
-            Lock vault
-          </button>
-          <button onClick={() => void signOut()}>Sign out</button>
-        </div>
-      </header>
-
-      <nav className="tabs">
+        <Brand />
+        <nav className="tabs">
         <button aria-current={tab === 'terminal' ? 'page' : undefined}
                 onClick={() => setTab('terminal')}>Terminal</button>
         <button aria-current={tab === 'files' ? 'page' : undefined}
@@ -137,8 +129,21 @@ export function App() {
                 onClick={() => setTab('sessions')}>Signed in</button>
         <button aria-current={tab === 'security' ? 'page' : undefined}
                 onClick={() => setTab('security')}>Security</button>
-      </nav>
+        </nav>
+        <div className="who">
+          <span className="name">{me.user.display_name || me.user.email}</span>
+          {me.user.is_admin && <span className="tag">admin</span>}
+          {me.user.sso && <span className="tag">sso</span>}
+        </div>
+        <div className="row">
+          <button onClick={() => void api.post('/api/vault/lock').then(refresh)}>
+            Lock vault
+          </button>
+          <button onClick={() => void signOut()}>Sign out</button>
+        </div>
+      </header>
 
+      <main className={'shell' + (tab === 'terminal' || tab === 'files' ? ' shell-wide' : '')}>
       {/*
         The workspace stays mounted once it has been opened. Unmounting it to
         visit another tab would dispose every xterm instance and lose the
@@ -156,6 +161,7 @@ export function App() {
       {tab === 'transfer' && <Transfer />}
       {tab === 'sessions' && <Sessions />}
       {tab === 'security' && <Security me={me} onChanged={refresh} />}
-    </main>
+      </main>
+    </>
   )
 }

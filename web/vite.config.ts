@@ -21,8 +21,11 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8443',
-        changeOrigin: false,
+        // BKD_PROXY lets frontend work run against a remote install
+        // (BKD_PROXY=https://host pnpm dev) when there is no local bkd.
+        target: process.env.BKD_PROXY ?? 'http://127.0.0.1:8443',
+        changeOrigin: Boolean(process.env.BKD_PROXY),
+        ws: true,
       },
     },
   },

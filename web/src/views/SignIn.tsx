@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ApiError, api, type AuthConfig } from '../api'
+import { Brand } from '../Brand'
 
 /**
  * SignIn offers whichever methods this deployment has enabled.
@@ -39,7 +40,7 @@ export function SignIn({ config, onSignedIn }: {
 
   return (
     <main className="centred">
-      <h1>Bridgekeeper</h1>
+      <Brand />
       <p className="muted">Sign in to reach your saved sessions and keys.</p>
 
       {error && <div className="error">{error}</div>}
