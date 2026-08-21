@@ -219,3 +219,108 @@ export function BroadcastMenu(props: BroadcastMenuProps) {
     </div>
   )
 }
+
+export interface SnippetBarProps {
+  /** The terminal of the active tab, or nothing to send to yet. */
+  terminalId: string | null
+}
+
+/**
+ * SnippetBar is the row of one-click commands under the terminals — the
+ * button bar every SecureCRT install grows at the bottom of the window, with
+ * a coloured dot per button because that is how people find "the red one
+ * that reboots" among twelve.
+ *
+ * Sending goes through the same audited API as the snippet menu. A snippet
+ * with parameters opens a small form first; one without goes immediately,
+ * because immediacy is the entire point of a button bar.
+ */
+export function SnippetBar(props: SnippetBarProps) {
+  const [snippets, setSnippets] = useState<Snippet[] | null>(null)
+  const [chosen, setChosen] = useState<Snippet | null>(null)
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [flash, setFlash] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+
+  useEffect(() => {
+    void api
+      .get<{ snippets: Snippet[] | null }>('/api/snippets')
+      .then((r) => setSnippets(r.snippets ?? []))
+      .catch(() => setSnippets([]))
+  }, [])
+
+  useEffect(() => {
+    if (!flash) return
+    const id = window.setTimeout(() => setFlash(null), 4000)
+    return () => window.clearTimeout(id)
+  }, [flash])
+
+  const send = async (snippet: Snippet, filled: Record<string, string>) => {
+    if (!props.terminalId) return
+    setSending(true)
+    try {
+      await api.post('/api/snippets/send', {
+        snippet_id: snippet.id, values: filled, terminals: [props.terminalId],
+      })
+      setFlash(`Sent “${snippet.name}”.`)
+      setChosen(null)
+    } catch (err) {
+      setFlash(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const click = (snippet: Snippet) => {
+    if (snippet.parameters.length === 0) {
+      void send(snippet, {})
+      return
+    }
+    setValues(Object.fromEntries(snippet.parameters.map((p) => [p, ''])))
+    setChosen((current) => (current?.id === snippet.id ? null : snippet))
+  }
+
+  // No snippets means no bar: an empty strip would be a question with no
+  // answer. The Snippets tab is where the first one gets written.
+  if (!snippets || snippets.length === 0) return null
+
+  return (
+    <div className="snippet-bar" data-testid="snippet-bar">
+      {chosen && (
+        <form
+          className="snippet-bar-form"
+          onSubmit={(e) => { e.preventDefault(); void send(chosen, values) }}
+        >
+          <span className="snippet-bar-form-name">{chosen.name}</span>
+          {chosen.parameters.map((parameter) => (
+            <input
+              key={parameter}
+              autoFocus={parameter === chosen.parameters[0]}
+              placeholder={parameter}
+              aria-label={parameter}
+              value={values[parameter] ?? ''}
+              onChange={(e) => setValues((v) => ({ ...v, [parameter]: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === 'Escape') setChosen(null) }}
+            />
+          ))}
+          <button type="submit" disabled={sending}>{sending ? 'Sending…' : 'Send'}</button>
+          <button type="button" onClick={() => setChosen(null)}>Cancel</button>
+        </form>
+      )}
+      <div className="snippet-bar-row">
+        {snippets.map((snippet, index) => (
+          <button
+            key={snippet.id}
+            className={`snip snip-c${index % 6}`}
+            title={snippet.description || snippet.body}
+            disabled={!props.terminalId || sending}
+            onClick={() => click(snippet)}
+          >
+            {snippet.name}
+          </button>
+        ))}
+        {flash && <span className="muted snippet-bar-flash">{flash}</span>}
+      </div>
+    </div>
+  )
+}

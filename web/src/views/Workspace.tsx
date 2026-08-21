@@ -8,6 +8,7 @@ import { SessionEditor } from './SessionEditor'
 import { FolderEditor } from './FolderEditor'
 import { ConsoleServer } from './ConsoleServer'
 import { TerminalPane } from '../terminal/TerminalPane'
+import { SnippetBar } from '../terminal/SessionTools'
 import { THEME_LABELS, isThemeName, type ThemeName } from '../terminal/themes'
 
 /** A tab is one terminal, live or being opened. */
@@ -34,9 +35,13 @@ interface Prefs {
   scrollback: number
   /** Panes shown side by side, rather than one at a time. */
   split: boolean
+  /** The connection tree on the left, which a busy rack wants out of the way. */
+  tree: boolean
 }
 
-const DEFAULT_PREFS: Prefs = { theme: 'dark', fontSize: 14, scrollback: 10_000, split: false }
+const DEFAULT_PREFS: Prefs = {
+  theme: 'dark', fontSize: 14, scrollback: 10_000, split: false, tree: true,
+}
 
 /**
  * Workspace is where the work happens: the saved connection tree on the left,
@@ -204,9 +209,11 @@ export function Workspace({ active }: { active: boolean }) {
 
   const shown = prefs.split ? tabs.slice(-2) : tabs.filter((t) => t.key === activeKey)
 
+  const activeTab = tabs.find((t) => t.key === activeKey) ?? null
+
   return (
-    <div className="workspace">
-      <aside className="sidebar">
+    <div className={'workspace' + (prefs.tree ? '' : ' collapsed')}>
+      <aside className="sidebar" hidden={!prefs.tree}>
         <div className="sidebar-head">
           <input
             className="filter"
@@ -227,6 +234,34 @@ export function Workspace({ active }: { active: boolean }) {
             </button>
           </div>
         </div>
+
+        {/*
+          The open terminals, with their state, before the saved tree — the
+          way SecureCRT's session manager keeps Active Sessions in reach.
+          Click focuses the tab; the cross ends the session. With a dozen
+          NewsLeb tabs open, this list is how you find the one that died.
+        */}
+        {tabs.length > 0 && (
+          <div className="open-tabs">
+            <h3>Open terminals</h3>
+            <ul className="plain">
+              {tabs.map((t) => (
+                <li key={t.key}
+                    className={'open-tab' + (t.key === activeKey ? ' current' : '')}>
+                  <span className={'open-tab-dot ' + (t.ended ? 'dot-ended' : t.terminalId ? 'dot-live' : 'dot-opening')} />
+                  <button className="open-tab-label" title={t.ended ?? undefined}
+                          onClick={() => setActiveKey(t.key)}>
+                    {t.label}
+                  </button>
+                  <button className="open-tab-close" aria-label={`Close ${t.label}`}
+                          onClick={() => void closeTab(t.key)}>
+                    {'×'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <SessionTree
           tree={tree}
@@ -287,6 +322,14 @@ export function Workspace({ active }: { active: boolean }) {
 
       <section className="terminals">
         <div className="tabstrip" role="tablist">
+          <button
+            className="link tree-toggle"
+            aria-label={prefs.tree ? 'Hide the connection tree' : 'Show the connection tree'}
+            title={prefs.tree ? 'Hide the connection tree' : 'Show the connection tree'}
+            onClick={() => setPrefs((p) => ({ ...p, tree: !p.tree }))}
+          >
+            {prefs.tree ? '◂▌' : '▌▸'}
+          </button>
           {tabs.map((tab) => (
             <div
               key={tab.key}
@@ -401,6 +444,10 @@ export function Workspace({ active }: { active: boolean }) {
             </div>
           )}
         </div>
+
+        {tabs.length > 0 && (
+          <SnippetBar terminalId={activeTab && !activeTab.ended ? activeTab.terminalId ?? null : null} />
+        )}
       </section>
     </div>
   )
@@ -416,6 +463,7 @@ function loadPrefs(): Prefs {
       fontSize: Number(parsed.fontSize) || DEFAULT_PREFS.fontSize,
       scrollback: Number(parsed.scrollback) || DEFAULT_PREFS.scrollback,
       split: Boolean(parsed.split),
+      tree: parsed.tree === undefined ? true : Boolean(parsed.tree),
     }
   } catch {
     return DEFAULT_PREFS

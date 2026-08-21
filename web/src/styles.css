@@ -291,6 +291,10 @@ hr { border: none; border-top: 1px solid var(--border); margin: 1.25rem 0; }
   min-height: 24rem;
 }
 
+/* The tree put away: the terminals take the whole width, the way a rack of
+   twelve tabs wants. The state is a preference, so it survives a reload. */
+.workspace.collapsed { grid-template-columns: 1fr; }
+
 @media (max-width: 55rem) {
   .workspace { grid-template-columns: 1fr; height: auto; }
 }
@@ -359,6 +363,84 @@ button.link.danger { color: var(--danger); }
 }
 
 .terminals { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+/* The tree toggle leads the tabstrip: one glyph, monospace, always in the
+   same place whether the tree is out or away. */
+.tree-toggle {
+  font-family: var(--mono); font-size: 0.85rem; line-height: 1;
+  color: var(--muted); padding: 0.15rem 0.3rem;
+}
+.tree-toggle:hover { color: var(--accent); text-decoration: none; }
+
+/* --- open terminals ---------------------------------------------------------
+
+   The live list in the sidebar: state dot, name, cross. The dot is the point
+   — with twelve tabs open, colour is how you find the one that died. */
+
+.open-tabs { border-bottom: 1px solid var(--border); padding: 0.5rem 0.6rem; }
+.open-tabs h3 {
+  font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--muted); margin: 0 0 0.3rem;
+}
+.open-tabs ul.plain > li { border: none; padding: 0; }
+.open-tab {
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.15rem 0.25rem; border-radius: 4px;
+}
+.open-tab:hover { background: var(--accent-soft); }
+.open-tab.current { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.open-tab-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
+.dot-live { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.dot-ended { background: var(--danger); }
+.dot-opening { background: var(--warn-border); }
+.open-tab-label {
+  flex: 1; min-width: 0; background: none; border: none; padding: 0;
+  color: inherit; font: inherit; font-size: 0.88rem; text-align: left;
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.open-tab-close {
+  flex: none; background: none; border: none; padding: 0 0.2rem;
+  color: var(--muted); cursor: pointer; line-height: 1; font-size: 0.95rem;
+}
+.open-tab-close:hover { color: var(--danger); }
+
+/* --- snippet bar ------------------------------------------------------------
+
+   The row of one-click commands under the terminals, dot-coloured the way
+   SecureCRT's button bar is, because "the red one reboots" is how the
+   commands are actually remembered. */
+
+.snippet-bar {
+  margin-top: 0.5rem; padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface);
+}
+.snippet-bar-row { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
+button.snip {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.2rem 0.6rem; font-family: var(--mono); font-size: 0.8rem;
+  background: var(--surface-2);
+}
+button.snip::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--snip, var(--accent));
+}
+button.snip:hover:not(:disabled) { border-color: var(--snip, var(--accent)); }
+.snip-c0 { --snip: var(--ok); }
+.snip-c1 { --snip: #58a6ff; }
+.snip-c2 { --snip: var(--warn-border); }
+.snip-c3 { --snip: #bc8cff; }
+.snip-c4 { --snip: #39c5cf; }
+.snip-c5 { --snip: var(--danger); }
+.snippet-bar-flash { margin-left: auto; font-size: 0.8rem; }
+.snippet-bar-form {
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+  padding-bottom: 0.35rem; margin-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+.snippet-bar-form-name { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); }
+.snippet-bar-form input { width: 11rem; padding: 0.25rem 0.45rem; font-size: 0.85rem; }
+.snippet-bar-form button { padding: 0.25rem 0.6rem; font-size: 0.85rem; }
 
 .tabstrip {
   display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;

@@ -223,6 +223,31 @@ export function TerminalPane(props: TerminalPaneProps) {
 
     sock.open()
 
+    // SecureCRT muscle memory: selecting copies, right-click pastes. The
+    // selection goes to the clipboard as it is made, so select-then-rightclick
+    // works between two panes the way it does between two PuTTY windows.
+    const copyOnSelect = xterm.onSelectionChange(() => {
+      const selection = xterm.getSelection()
+      if (!selection) return
+      navigator.clipboard?.writeText(selection).catch(() => {
+        // The page was not focused, or the browser said no. Ctrl+C still works.
+      })
+    })
+    const screen = host.current
+    const onContextMenu = (event: MouseEvent) => {
+      event.preventDefault()
+      navigator.clipboard
+        ?.readText()
+        .then((text) => {
+          if (text) xterm.paste(text)
+        })
+        .catch(() => {
+          say('warning',
+            'The browser refused clipboard access. Allow it in the address bar, or paste with Ctrl+Shift+V.')
+        })
+    }
+    screen?.addEventListener('contextmenu', onContextMenu)
+
     // ResizeObserver rather than a window listener: a split pane changes size
     // without the window doing anything.
     const observer = new ResizeObserver(() => {
@@ -237,6 +262,8 @@ export function TerminalPane(props: TerminalPaneProps) {
 
     return () => {
       observer.disconnect()
+      copyOnSelect.dispose()
+      screen?.removeEventListener('contextmenu', onContextMenu)
       marks.dispose()
       unregisterTerminal(callbacks.current.paneKey)
       typed.dispose()
@@ -250,6 +277,14 @@ export function TerminalPane(props: TerminalPaneProps) {
     // and a re-run would drop the session it is displaying.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // The tab's own record of death follows the pane state rather than only
+  // the socket's close event: a session that failed at the handshake never
+  // gets a close frame, and without this the sidebar dot stayed amber on a
+  // terminal whose pane already said Ended.
+  useEffect(() => {
+    if (state === 'ended') callbacks.current.onEnded(detail || 'The connection closed.')
+  }, [state, detail])
 
   // Appearance changes apply in place, without disturbing the session.
   useEffect(() => {
