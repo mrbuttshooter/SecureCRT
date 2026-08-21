@@ -156,6 +156,9 @@ header.bar .who .name {
    and the two buttons matter more than repeating who you are. */
 @media (max-width: 96rem) { header.bar .who .name { display: none; } }
 @media (max-width: 72rem) { header.bar .who { display: none; } }
+/* Tighter still, the wordmark yields to the navigation: the mark alone says
+   whose window this is, and overlapping text says nothing at all. */
+@media (max-width: 56rem) { header.bar .brand-name { display: none; } }
 header.bar .row { flex: none; flex-wrap: nowrap; }
 header.bar .row button { padding: 0.32rem 0.7rem; font-size: 0.85rem; }
 
@@ -449,6 +452,7 @@ button.snip:hover:not(:disabled) { border-color: var(--snip, var(--accent)); }
   border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; margin-bottom: 0.5rem;
 }
 .tabstrip .tab { flex: none; }
+.tabstrip .tab .open-tab-dot { flex: none; width: 6px; height: 6px; }
 .tabstrip-tools { flex: none; }
 .tab {
   display: flex; align-items: center; gap: 0.25rem;

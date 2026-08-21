@@ -101,6 +101,10 @@ export function TerminalPane(props: TerminalPaneProps) {
     })
   }
 
+  // The mount-once closure needs the current link state; a ref mirrors it.
+  const stateRef = useRef<LinkState>('opening')
+  stateRef.current = state
+
   // Callbacks change on every render; the effect below must not tear the
   // terminal down when they do, so it reads them through a ref.
   const callbacks = useRef(props)
@@ -285,6 +289,13 @@ export function TerminalPane(props: TerminalPaneProps) {
     // where tab switching actually happens.
     xterm.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true
+      // A dead pane answers Enter with a redial — the thing every engineer
+      // tries first anyway. SecureCRT never had this; people asked.
+      if (event.key === 'Enter' && stateRef.current === 'ended') {
+        event.preventDefault()
+        reconnectRef.current()
+        return false
+      }
       const command = commandFor(event)
       if (!command) return true
       if (command.kind === 'find') {
@@ -393,6 +404,8 @@ export function TerminalPane(props: TerminalPaneProps) {
     socket.current?.answerHostKey(accepted)
   }
 
+  const reconnectRef = useRef<() => void>(() => {})
+
   // Reconnect redials in place: same pane, same xterm, same scrollback. What
   // the switch printed before it dropped you is usually the thing you were
   // reading, so recreating the terminal would destroy the evidence. A rule is
@@ -407,6 +420,8 @@ export function TerminalPane(props: TerminalPaneProps) {
     xterm.writeln(`\r\n\x1b[2m\u2500\u2500\u2500 reconnecting ${at} \u2500\u2500\u2500\x1b[0m`)
     if (sock.reopen()) callbacks.current.onReconnected?.()
   }
+
+  reconnectRef.current = reconnect
 
   const canReconnect = Boolean(socket.current?.canReopen)
 
@@ -590,6 +605,7 @@ export function TerminalPane(props: TerminalPaneProps) {
             {canReconnect && (
               <div className="row">
                 <button className="primary" onClick={reconnect}>Reconnect</button>
+                <span className="muted">or press Enter</span>
               </div>
             )}
           </div>

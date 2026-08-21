@@ -547,6 +547,8 @@ export function Workspace({ active }: { active: boolean }) {
                 setTabMenu({ x: e.clientX, y: e.clientY, key: tab.key })
               }}
             >
+              <span className={'open-tab-dot ' +
+                (tab.ended ? 'dot-ended' : tab.terminalId ? 'dot-live' : 'dot-opening')} />
               <button className="tab-label" onClick={() => focusTab(tab.key)}>
                 {tab.label}
                 {tab.ended && <span className="muted"> · ended</span>}
