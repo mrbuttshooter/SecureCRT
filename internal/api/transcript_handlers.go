@@ -63,7 +63,8 @@ func (a *API) handleDownloadTranscript(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleToggleRecording(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
 
-	id := strings.TrimSuffix(pathID(r.URL.Path, "/api/terminals/"), "/recording")
+	// pathID rejects nested paths outright, so the suffix comes off first.
+	id := pathID(strings.TrimSuffix(r.URL.Path, "/recording"), "/api/terminals/")
 	if id == "" {
 		writeError(w, a.log, http.StatusBadRequest, CodeBadRequest, "No terminal was specified.")
 		return
