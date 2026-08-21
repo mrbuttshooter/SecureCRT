@@ -19,6 +19,10 @@ export interface SessionTreeProps {
   /** Ctrl+click multi-selection, owned by the workspace. */
   checkedIds: Set<string>
   onToggleCheck: (session: SavedSession) => void
+  /** Names a team by id, for the shared-folder badge. */
+  teamName: (id: string) => string
+  /** Open the per-user credential picker for a shared folder. */
+  onFolderCredential: (folder: Folder) => void
   /** Move an item to a folder. Empty destination means the top level. */
   onMove: (kind: 'folder' | 'session', id: string, destinationFolderId: string) => void
 }
@@ -177,6 +181,10 @@ export function SessionTree(props: SessionTreeProps) {
               { label: 'New connection here', onClick: () => props.onNewSessionIn(node.folder.id) },
               { label: 'New folder here', onClick: () => props.onNewFolderIn(node.folder.id) },
               { label: 'Folder defaults…', onClick: () => props.onEditFolder(node.folder) },
+              ...(node.folder.team_id
+                ? [{ label: 'My credential for this rack…',
+                     onClick: () => props.onFolderCredential(node.folder) }]
+                : []),
               { label: '—', disabled: true, onClick: () => {} },
               {
                 label: `Connect all ${inside.length}`,
@@ -203,6 +211,12 @@ export function SessionTree(props: SessionTreeProps) {
             {isCollapsed ? '▸' : '▾'}
           </button>
           <span className="tree-name">{node.folder.name}</span>
+          {node.folder.team_id && (
+            <span className="tag shared-tag"
+                  title="Shared with a team; managed by an administrator">
+              {props.teamName(node.folder.team_id)}
+            </span>
+          )}
           <span className="tree-tools">
             <button className="link" title="New connection here"
                     onClick={() => props.onNewSessionIn(node.folder.id)}>+ Connection</button>

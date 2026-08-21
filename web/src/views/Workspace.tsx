@@ -10,6 +10,7 @@ import { ConsoleServer } from './ConsoleServer'
 import { TerminalPane } from '../terminal/TerminalPane'
 import { SnippetBar } from '../terminal/SessionTools'
 import { QuickConnect } from './QuickConnect'
+import { FolderCredentialPicker } from './FolderCredentialPicker'
 import { ContextMenu, type MenuItem } from '../ContextMenu'
 import { commandFor } from '../terminal/keys'
 import { THEME_LABELS, isThemeName, type ThemeName } from '../terminal/themes'
@@ -78,6 +79,7 @@ export function Workspace({ active }: { active: boolean }) {
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const dragTab = useRef<string | null>(null)
   const [quickFocus, setQuickFocus] = useState(0)
+  const [folderCred, setFolderCred] = useState<Folder | null>(null)
   // Most-recently-active tab keys, newest first. Split mode shows the top
   // two, so what is on screen always includes the tab you last clicked —
   // showing anything else while focus follows activeKey was a
@@ -484,6 +486,8 @@ export function Workspace({ active }: { active: boolean }) {
             return next
           })}
           onMove={(kind, id, destination) => void move(kind, id, destination)}
+          teamName={(id) => (tree.teams ?? []).find((t) => t.id === id)?.name ?? 'shared'}
+          onFolderCredential={(folder) => setFolderCred(folder)}
         />
 
         {orphans.length > 0 && (
@@ -695,6 +699,7 @@ export function Workspace({ active }: { active: boolean }) {
           <FolderEditor
             folder={panel.folder}
             parentId={panel.parentId}
+            publishTeams={tree.teams}
             onSaved={() => { setPanel({ kind: 'none' }); void loadTree() }}
             onCancel={() => setPanel({ kind: 'none' })}
           />
@@ -761,6 +766,10 @@ export function Workspace({ active }: { active: boolean }) {
           items={tabMenuItems(tabMenu.key)}
           onClose={() => setTabMenu(null)}
         />
+      )}
+
+      {folderCred && (
+        <FolderCredentialPicker folder={folderCred} onClose={() => setFolderCred(null)} />
       )}
     </div>
   )

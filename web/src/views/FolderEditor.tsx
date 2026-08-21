@@ -7,6 +7,8 @@ export interface FolderEditorProps {
   parentId: string
   onSaved: (folder: Folder) => void
   onCancel: () => void
+  /** Teams the admin can publish a new top-level folder into. */
+  publishTeams?: { id: string; name: string }[]
 }
 
 /**
@@ -28,6 +30,7 @@ export function FolderEditor(props: FolderEditorProps) {
   const [credentialId, setCredentialId] = useState(defaults.credential_id ?? '')
   const [triggers, setTriggers] = useState<Trigger[]>(defaults.triggers ?? [])
   const [logSession, setLogSession] = useState(defaults.log_session ?? false)
+  const [teamId, setTeamId] = useState('')
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -58,7 +61,10 @@ export function FolderEditor(props: FolderEditorProps) {
 
     const body = editing
       ? { name: name.trim(), defaults: settings }
-      : { name: name.trim(), parent_id: props.parentId, defaults: settings }
+      : {
+          name: name.trim(), parent_id: props.parentId, defaults: settings,
+          ...(teamId ? { team_id: teamId } : {}),
+        }
 
     try {
       const saved = editing
@@ -81,6 +87,18 @@ export function FolderEditor(props: FolderEditorProps) {
         <input value={name} onChange={(e) => setName(e.target.value)}
                placeholder="Edge routers" required />
       </label>
+
+      {!editing && props.parentId === '' && (props.publishTeams?.length ?? 0) > 0 && (
+        <label>
+          Owner
+          <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+            <option value="">My personal tree</option>
+            {props.publishTeams!.map((t) => (
+              <option key={t.id} value={t.id}>Shared with {t.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <p className="muted">
         Connections in this folder inherit anything set below, unless they

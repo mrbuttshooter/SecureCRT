@@ -898,3 +898,26 @@ textarea.paste-preview {
   white-space: pre; overflow: auto;
   font-family: var(--mono); font-size: 0.8rem; line-height: 1.4;
 }
+
+/* --- teams & admin --------------------------------------------------------- */
+
+/* The shared badge on a folder: quiet, the accent colour, so a glance
+   separates the team's rack from your own without shouting. */
+.shared-tag {
+  border-color: var(--accent); color: var(--accent);
+  background: var(--accent-soft); margin-left: 0.4rem;
+}
+
+.subtabs { display: flex; gap: 0.15rem; margin: 0.5rem 0 1rem; flex-wrap: wrap; }
+.subtabs button {
+  background: none; border: 1px solid transparent; border-radius: var(--radius);
+  padding: 0.3rem 0.7rem; cursor: pointer; color: var(--muted);
+  font-family: var(--mono); font-size: 0.82rem;
+}
+.subtabs button:hover { color: var(--text); }
+.subtabs button[aria-current="page"] {
+  color: var(--text); border-color: var(--border); background: var(--surface-2);
+}
+
+.team-members { margin: 0.4rem 0 0.6rem; background: var(--surface-2); }
+.team-members .row { margin-bottom: 0.5rem; }

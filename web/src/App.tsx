@@ -14,10 +14,11 @@ import { Transfer } from './views/Transfer'
 import { Tunnels } from './views/Tunnels'
 import { Snippets } from './views/Snippets'
 import { Transcripts } from './views/Transcripts'
+import { Admin } from './views/Admin'
 
 type Tab =
   | 'terminal' | 'files' | 'tunnels' | 'snippets' | 'credentials'
-  | 'hosts' | 'recordings' | 'transfer' | 'sessions' | 'security'
+  | 'hosts' | 'recordings' | 'transfer' | 'sessions' | 'security' | 'admin'
 
 /**
  * App decides what to show from a single whoami response.
@@ -132,6 +133,10 @@ export function App() {
                 onClick={() => setTab('sessions')}>Signed in</button>
         <button aria-current={tab === 'security' ? 'page' : undefined}
                 onClick={() => setTab('security')}>Security</button>
+        {me.user.is_admin && (
+          <button aria-current={tab === 'admin' ? 'page' : undefined}
+                  onClick={() => setTab('admin')}>Admin</button>
+        )}
         </nav>
         <div className="who">
           <span className="name">{me.user.display_name || me.user.email}</span>
@@ -162,6 +167,7 @@ export function App() {
       {tab === 'credentials' && <Credentials />}
       {tab === 'hosts' && <KnownHosts />}
       {tab === 'recordings' && <Transcripts />}
+      {tab === 'admin' && me.user.is_admin && <Admin />}
       {tab === 'transfer' && <Transfer />}
       {tab === 'sessions' && <Sessions />}
       {tab === 'security' && <Security me={me} onChanged={refresh} />}

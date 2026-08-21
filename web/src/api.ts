@@ -340,6 +340,8 @@ export interface Folder {
   sort_order: number
   created_at: string
   updated_at: string
+  /** Present when the folder lives in a team's shared tree. */
+  team_id?: string
 }
 
 export interface SavedSession {
@@ -367,11 +369,65 @@ export interface SavedSession {
   created_at: string
   updated_at: string
   last_used_at?: string
+  /** Present when the connection lives in a team's shared tree. */
+  team_id?: string
 }
 
 export interface Tree {
   folders: Folder[]
   sessions: SavedSession[]
+  /** The caller's teams, for labelling shared folders. */
+  teams?: TeamRef[]
+}
+
+export interface TeamRef {
+  id: string
+  name: string
+}
+
+export interface Team {
+  id: string
+  name: string
+  description: string
+  created_at: string
+  members?: number
+}
+
+export interface TeamMember {
+  user_id: string
+  email: string
+  name: string
+  added_at: string
+}
+
+export interface AdminTerminal {
+  id: string
+  user_id: string
+  user_email: string
+  label: string
+  protocol: string
+  host: string
+  port: number
+  device?: string
+  encrypted: boolean
+  recorded?: boolean
+  created_at: string
+  attached: boolean
+  closed: boolean
+}
+
+export interface AuditEvent {
+  id: string
+  occurred_at: string
+  actor_email: string
+  ip: string
+  action: string
+  severity: string
+  target_type: string
+  target_id: string
+  target_label: string
+  outcome: string
+  detail: Record<string, unknown> | null
 }
 
 export interface ResolvedSession extends SavedSession {
