@@ -34,3 +34,7 @@ web/playwright-report/
 .idea/
 *.swp
 .DS_Store
+
+# Browser-automation scratch output
+.playwright-mcp/
+.claude/launch.json
