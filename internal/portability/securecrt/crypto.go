@@ -112,6 +112,8 @@ func DecryptPassword(value, configPassphrase string) (string, error) {
 	value = strings.TrimSpace(value)
 
 	switch {
+	case strings.HasPrefix(value, "03:"):
+		return decryptV3(strings.TrimPrefix(value, "03:"), configPassphrase)
 	case strings.HasPrefix(value, "02:"):
 		return decryptV2(strings.TrimPrefix(value, "02:"), configPassphrase)
 	case strings.HasPrefix(value, "01:"):
@@ -126,9 +128,82 @@ func DecryptPassword(value, configPassphrase string) (string, error) {
 	}
 }
 
-// DecryptV2 decodes a "Password V2" value.
+// DecryptV2 decodes a "Password V2" value, whichever generation it is: a 9.x
+// file writes 03: under this key, older files write 02:, and a bare value is
+// the 02: scheme without its prefix.
 func DecryptV2(value, configPassphrase string) (string, error) {
-	return decryptV2(strings.TrimPrefix(strings.TrimSpace(value), "02:"), configPassphrase)
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "03:") {
+		return decryptV3(strings.TrimPrefix(value, "03:"), configPassphrase)
+	}
+	return decryptV2(strings.TrimPrefix(value, "02:"), configPassphrase)
+}
+
+// decryptV3 is the hardened format SecureCRT 9.x writes when a configuration
+// passphrase is in effect: a random 16-byte salt, a bcrypt_pbkdf of the
+// passphrase and salt for the AES key and IV, then the same length-prefixed,
+// self-checksummed plaintext the V2 format carries.
+//
+// The KDF is what the 2022 advisory added to resist brute force. Everything
+// after the AES layer is shared with decryptV2, including the checksum that
+// tells a wrong passphrase apart from a right one.
+func decryptV3(hexValue, configPassphrase string) (string, error) {
+	raw, err := hex.DecodeString(strings.TrimSpace(hexValue))
+	if err != nil {
+		return "", fmt.Errorf("%w: not hexadecimal", ErrNotEncrypted)
+	}
+	if len(raw) < 16+aes.BlockSize {
+		return "", fmt.Errorf("%w: too short to hold a salt and a block", ErrCorrupt)
+	}
+	salt, body := raw[:16], raw[16:]
+	if len(body)%aes.BlockSize != 0 {
+		return "", fmt.Errorf("%w: length %d is not a whole number of blocks", ErrCorrupt, len(body))
+	}
+
+	// 32 bytes of key and 16 of IV, 16 rounds — the parameters SecureCRT uses.
+	kdf, err := bcryptPBKDF([]byte(configPassphrase), salt, 32+aes.BlockSize, 16)
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(kdf[:32])
+	if err != nil {
+		return "", err
+	}
+
+	plain := make([]byte, len(body))
+	cipher.NewCBCDecrypter(block, kdf[32:32+aes.BlockSize]).CryptBlocks(plain, body)
+	return parseCheckedPlaintext(plain)
+}
+
+// encryptV3ForTest produces a "03:" body the way SecureCRT 9.x does, for the
+// round-trip test. Not used at run time — the product only ever reads these.
+func encryptV3ForTest(password, configPassphrase string) (string, error) {
+	plain := []byte(password)
+	digest := sha256.Sum256(plain)
+	body := make([]byte, 0, 4+len(plain)+sha256.Size)
+	body = binary.LittleEndian.AppendUint32(body, uint32(len(plain))) // #nosec G115 -- short
+	body = append(body, plain...)
+	body = append(body, digest[:]...)
+	padded, err := padRandom(body, aes.BlockSize)
+	if err != nil {
+		return "", err
+	}
+
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
+	}
+	kdf, err := bcryptPBKDF([]byte(configPassphrase), salt, 32+aes.BlockSize, 16)
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(kdf[:32])
+	if err != nil {
+		return "", err
+	}
+	out := make([]byte, len(padded))
+	cipher.NewCBCEncrypter(block, kdf[32:32+aes.BlockSize]).CryptBlocks(out, padded)
+	return hex.EncodeToString(append(salt, out...)), nil
 }
 
 // DecryptLegacy decodes a pre-version-7 "Password" value.
@@ -159,15 +234,19 @@ func decryptV2(hexValue, configPassphrase string) (string, error) {
 
 	plain := make([]byte, len(raw))
 	cipher.NewCBCDecrypter(block, make([]byte, aes.BlockSize)).CryptBlocks(plain, raw)
+	return parseCheckedPlaintext(plain)
+}
 
+// parseCheckedPlaintext reads the length-prefixed, SHA-256-checksummed body
+// both V2 and V3 produce, and is where a wrong passphrase is caught: random
+// bytes almost never carry a length that points at their own valid digest.
+func parseCheckedPlaintext(plain []byte) (string, error) {
 	if len(plain) < 4+sha256.Size {
 		return "", fmt.Errorf("%w: too short to hold a length and a digest", ErrCorrupt)
 	}
 
 	length := int(binary.LittleEndian.Uint32(plain[:4]))
 	if length < 0 || length > maxPasswordBytes || 4+length+sha256.Size > len(plain) {
-		// A wrong passphrase produces random bytes, so an impossible length
-		// is overwhelmingly likely to be exactly that rather than corruption.
 		return "", ErrWrongConfigPassphrase
 	}
 
