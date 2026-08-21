@@ -38,8 +38,8 @@ broadcast, highlighting and transcripts.
 | 5 | Tunnels & jump hosts | **complete** |
 | 6 | Telnet, serial & console servers | **complete** |
 | 7 | Power-user features (broadcast, snippets, watch rules) | **complete** |
-| 8 | Enterprise (RBAC, team sharing) | SSO delivered early, in Phase 1 |
-| 9 | Hardening & operations | not started |
+| 8 | Enterprise: shared device tree, teams, admin oversight | **complete** |
+| 9 | Hardening: drain-mode upgrades, retention, backups | **in progress** |
 
 ## Design in one page
 
