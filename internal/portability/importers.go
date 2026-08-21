@@ -121,6 +121,21 @@ func fromSecureCRTResult(result securecrt.Result, opts SecureCRTOptions) (Import
 	sorted := append([]securecrt.Session{}, result.Sessions...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Path < sorted[j].Path })
 
+	// A session with no hostname cannot become a connection here — SecureCRT
+	// local shells are the usual culprits — and one of them must not stop
+	// five hundred real devices from arriving. Left out, and said so.
+	kept := sorted[:0]
+	for _, session := range sorted {
+		if session.Hostname == "" && session.Protocol != "serial" {
+			out.Warnings = append(out.Warnings, fmt.Sprintf(
+				"%q has no hostname (a local shell, perhaps) and was left out.",
+				session.Path))
+			continue
+		}
+		kept = append(kept, session)
+	}
+	sorted = kept
+
 	// Session name to identifier, so a jump host named by another session can
 	// be resolved once every session exists.
 	byName := map[string]string{}
