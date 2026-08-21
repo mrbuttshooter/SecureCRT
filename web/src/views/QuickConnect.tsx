@@ -102,7 +102,7 @@ export function QuickConnect(props: QuickConnectProps) {
       <input
         ref={input}
         aria-label="Quick connect"
-        placeholder={'user@host:port \u2014 Enter connects'}
+        placeholder={'user@host \u2014 press Enter to connect'}
         value={value}
         disabled={busy}
         onChange={(e) => setValue(e.target.value)}
