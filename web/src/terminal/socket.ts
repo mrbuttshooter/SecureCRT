@@ -151,6 +151,34 @@ export class TerminalSocket {
     this.connect()
   }
 
+  /**
+   * reopen redials the saved connection after the previous attempt ended.
+   *
+   * This is the deliberate kind of reconnect — the user asked — as opposed
+   * to scheduleReconnect, which is the automatic kind for a dropped socket.
+   * The old terminal id is discarded: it named a session that is over, and
+   * offering it to the server would only earn the "no longer available"
+   * refusal. Reattach-by-id keeps working through the params when the pane
+   * was opened onto an orphan that is still alive.
+   */
+  reopen(): boolean {
+    if (!this.params.sessionId) return false
+    this.clearTimers()
+    this.ws?.close(1000, 'reopening')
+    this.ws = null
+    this.terminalId = null
+    this.attempt = 0
+    this.closedByUs = false
+    this.handlers.onState('opening')
+    this.connect()
+    return true
+  }
+
+  /** canReopen says whether reopen() has a saved connection to redial. */
+  get canReopen(): boolean {
+    return Boolean(this.params.sessionId)
+  }
+
   /** close ends the socket. The server-side terminal keeps running. */
   close(): void {
     this.closedByUs = true
@@ -253,9 +281,14 @@ export class TerminalSocket {
 
       // Without a terminal ID there is nothing to reattach to: the failure
       // happened before the session existed, so retrying would just re-dial
-      // a host that already refused us.
+      // a host that already refused us. Say why, though — a socket that dies
+      // this early is usually an expired sign-in or an unreachable server,
+      // and a bare "Ended" reads as the host's fault.
       if (!this.terminalId) {
         this.handlers.onState('ended')
+        this.handlers.onError('socket_failed',
+          'The connection to the server failed before the session started. ' +
+          'Your sign-in may have expired — reload the page if this repeats.')
         return
       }
       this.scheduleReconnect()

@@ -9,6 +9,9 @@ import { FolderEditor } from './FolderEditor'
 import { ConsoleServer } from './ConsoleServer'
 import { TerminalPane } from '../terminal/TerminalPane'
 import { SnippetBar } from '../terminal/SessionTools'
+import { QuickConnect } from './QuickConnect'
+import { ContextMenu, type MenuItem } from '../ContextMenu'
+import { commandFor } from '../terminal/keys'
 import { THEME_LABELS, isThemeName, type ThemeName } from '../terminal/themes'
 
 /** A tab is one terminal, live or being opened. */
@@ -19,6 +22,8 @@ interface Tab {
   sessionId?: string
   terminalId?: string
   ended?: string
+  /** One of six marker colours, or undefined for none. */
+  colour?: number
 }
 
 type Panel =
@@ -37,11 +42,17 @@ interface Prefs {
   split: boolean
   /** The connection tree on the left, which a busy rack wants out of the way. */
   tree: boolean
+  /** Ask before pasting more than one line into a terminal. */
+  pasteGuard: boolean
 }
 
 const DEFAULT_PREFS: Prefs = {
   theme: 'dark', fontSize: 14, scrollback: 10_000, split: false, tree: true,
+  pasteGuard: true,
 }
+
+/** Where the open tabs are remembered, so a reload can offer them back. */
+const TABS_KEY = 'bkd.terminal.tabs'
 
 /**
  * Workspace is where the work happens: the saved connection tree on the left,
@@ -62,7 +73,20 @@ export function Workspace({ active }: { active: boolean }) {
   const [filter, setFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs)
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; key: string } | null>(null)
+  const [quickFocus, setQuickFocus] = useState(0)
+  // Most-recently-active tab keys, newest first. Split mode shows the top
+  // two, so what is on screen always includes the tab you last clicked —
+  // showing anything else while focus follows activeKey was a
+  // keystrokes-into-a-hidden-pane bug.
+  const [recency, setRecency] = useState<string[]>([])
   const nextKey = useRef(0)
+  const restored = useRef(false)
+
+  const focusTab = useCallback((key: string) => {
+    setActiveKey(key)
+    setRecency((prev) => [key, ...prev.filter((k) => k !== key)])
+  }, [])
 
   useEffect(() => {
     try {
@@ -71,6 +95,21 @@ export function Workspace({ active }: { active: boolean }) {
       // Private browsing, or a storage quota. Preferences are a convenience.
     }
   }, [prefs])
+
+  // The open tabs are remembered so a reload does not scatter the workspace.
+  useEffect(() => {
+    if (!restored.current) return
+    try {
+      window.localStorage.setItem(TABS_KEY, JSON.stringify({
+        tabs: tabs.map((t) => ({
+          label: t.label, sessionId: t.sessionId,
+          terminalId: t.terminalId, colour: t.colour,
+        })),
+        active: tabs.findIndex((t) => t.key === activeKey),
+      }))
+    } catch { /* convenience only */ }
+  }, [tabs, activeKey])
+
 
   const loadTree = useCallback(async () => {
     try {
@@ -89,6 +128,43 @@ export function Workspace({ active }: { active: boolean }) {
       // briefly stale, which is not worth an error banner.
     }
   }, [])
+
+  // On mount: reattach every remembered tab whose terminal is still running.
+  // Only the living come back — auto-redialling dead sessions on reload
+  // would be this browser deciding to dial switches on its own.
+  useEffect(() => {
+    if (restored.current) return
+    restored.current = true
+    void (async () => {
+      let saved: { tabs?: Array<Partial<Tab>>; active?: number }
+      try {
+        saved = JSON.parse(window.localStorage.getItem(TABS_KEY) ?? '{}')
+      } catch { return }
+      if (!saved.tabs?.length) return
+      let alive: Set<string>
+      try {
+        const r = await api.get<{ terminals: LiveTerminal[] }>('/api/terminals')
+        alive = new Set((r.terminals ?? []).filter((t) => !t.closed).map((t) => t.id))
+      } catch { return }
+      const revived = saved.tabs
+        .filter((t) => t.terminalId && alive.has(t.terminalId))
+        .map((t) => ({
+          key: `tab-${nextKey.current++}`,
+          label: t.label ?? 'terminal',
+          sessionId: t.sessionId,
+          terminalId: t.terminalId,
+          colour: t.colour,
+        }))
+      if (!revived.length) return
+      setTabs(revived)
+      const wanted = saved.tabs[saved.active ?? -1]?.terminalId
+      const focus = revived.find((t) => t.terminalId === wanted) ?? revived.at(-1)!
+      setActiveKey(focus.key)
+      setRecency(revived.map((t) => t.key).reverse())
+      void loadLive()
+    })()
+  }, [loadLive])
+
 
   // Reloaded whenever this becomes the visible tab, not only on mount. The
   // workspace stays mounted while another tab is in front — that is what
@@ -117,7 +193,7 @@ export function Workspace({ active }: { active: boolean }) {
   const openTab = (tab: Omit<Tab, 'key'>) => {
     const key = `tab-${nextKey.current++}`
     setTabs((prev) => [...prev, { ...tab, key }])
-    setActiveKey(key)
+    focusTab(key)
   }
 
   const connect = (session: SavedSession) => {
@@ -129,16 +205,23 @@ export function Workspace({ active }: { active: boolean }) {
   }
 
   const reattach = (t: LiveTerminal) => {
-    openTab({ label: t.label || t.host, terminalId: t.id })
+    // The saved-connection id comes along so that when this terminal
+    // eventually ends, the tab can still redial. Dropping it made orphan
+    // tabs unreconnectable corpses.
+    openTab({ label: t.label || t.host, terminalId: t.id, sessionId: t.session_id })
   }
 
   const closeTab = async (key: string) => {
     const tab = tabs.find((t) => t.key === key)
     setTabs((prev) => prev.filter((t) => t.key !== key))
+    setRecency((prev) => prev.filter((k) => k !== key))
     setActiveKey((current) => {
       if (current !== key) return current
+      // The neighbour, not the far end of the strip: closing tab 3 of 8
+      // should land you on 4, the way every tabbed application works.
+      const index = tabs.findIndex((t) => t.key === key)
       const remaining = tabs.filter((t) => t.key !== key)
-      return remaining.at(-1)?.key ?? null
+      return (remaining[index] ?? remaining[index - 1])?.key ?? null
     })
 
     // Closing a tab ends the session. Leaving it running would be worse: an
@@ -207,14 +290,121 @@ export function Workspace({ active }: { active: boolean }) {
     }
   }
 
-  const shown = prefs.split ? tabs.slice(-2) : tabs.filter((t) => t.key === activeKey)
+  // Split shows the active tab plus the one used most recently before it.
+  const shown = prefs.split
+    ? tabs.filter((t) => recency.slice(0, 2).includes(t.key))
+    : tabs.filter((t) => t.key === activeKey)
 
   const activeTab = tabs.find((t) => t.key === activeKey) ?? null
+
+  // The chords the panes claim from xterm bubble up to here; this listener
+  // is also what makes them work when focus is in the tree or the filter.
+  useEffect(() => {
+    if (!active) return
+    const onKey = (event: KeyboardEvent) => {
+      const command = commandFor(event)
+      if (!command) return
+      switch (command.kind) {
+        case 'jump': {
+          const target = tabs[command.index]
+          if (target) { event.preventDefault(); focusTab(target.key) }
+          break
+        }
+        case 'next-tab':
+        case 'prev-tab': {
+          if (tabs.length < 2) break
+          event.preventDefault()
+          const at = Math.max(0, tabs.findIndex((t) => t.key === activeKey))
+          const step = command.kind === 'next-tab' ? 1 : tabs.length - 1
+          focusTab(tabs[(at + step) % tabs.length]!.key)
+          break
+        }
+        case 'quick-connect':
+          event.preventDefault()
+          setQuickFocus((n) => n + 1)
+          if (!prefs.tree) setPrefs((p) => ({ ...p, tree: true }))
+          break
+        case 'close-tab':
+          if (activeKey) { event.preventDefault(); void closeTab(activeKey) }
+          break
+        case 'duplicate-tab': {
+          const current = tabs.find((t) => t.key === activeKey)
+          if (current?.sessionId) {
+            event.preventDefault()
+            openTab({ label: current.label, sessionId: current.sessionId })
+          }
+          break
+        }
+        // find and broadcast are handled inside the focused pane.
+        case 'find':
+        case 'broadcast':
+          break
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  })
+
+  // Everything a right-click on a tab offers. Reconnect lives on the pane
+  // itself, where the Ended state is; this menu is about tab housekeeping.
+  const tabMenuItems = (key: string): MenuItem[] => {
+    const tab = tabs.find((t) => t.key === key)
+    if (!tab) return []
+    const at = tabs.findIndex((t) => t.key === key)
+    return [
+      {
+        label: 'Duplicate',
+        disabled: !tab.sessionId,
+        onClick: () => openTab({ label: tab.label, sessionId: tab.sessionId }),
+      },
+      {
+        label: 'Rename…',
+        onClick: () => {
+          const name = window.prompt('Tab name', tab.label)
+          if (name?.trim()) {
+            setTabs((prev) => prev.map((t) => (t.key === key ? { ...t, label: name.trim() } : t)))
+          }
+        },
+      },
+      {
+        label: tab.colour === undefined ? 'Mark with a colour' : 'Next colour',
+        onClick: () => setTabs((prev) => prev.map((t) =>
+          t.key === key ? { ...t, colour: ((t.colour ?? -1) + 1) % 6 } : t)),
+      },
+      ...(tab.colour !== undefined
+        ? [{
+            label: 'Clear the colour',
+            onClick: () => setTabs((prev) => prev.map((t) =>
+              t.key === key ? { ...t, colour: undefined } : t)),
+          }]
+        : []),
+      { label: '—', disabled: true, onClick: () => {} },
+      { label: 'Close', danger: true, onClick: () => void closeTab(key) },
+      {
+        label: 'Close the others',
+        danger: true,
+        disabled: tabs.length < 2,
+        onClick: () => tabs.filter((t) => t.key !== key).forEach((t) => void closeTab(t.key)),
+      },
+      {
+        label: 'Close to the right',
+        danger: true,
+        disabled: at === tabs.length - 1,
+        onClick: () => tabs.slice(at + 1).forEach((t) => void closeTab(t.key)),
+      },
+    ]
+  }
 
   return (
     <div className={'workspace' + (prefs.tree ? '' : ' collapsed')}>
       <aside className="sidebar" hidden={!prefs.tree}>
         <div className="sidebar-head">
+          <QuickConnect
+            tree={tree}
+            focusSignal={quickFocus}
+            onConnected={(session) => connect(session)}
+            onTreeChanged={() => void loadTree()}
+          />
           <input
             className="filter"
             aria-label="Filter connections"
@@ -250,7 +440,7 @@ export function Workspace({ active }: { active: boolean }) {
                     className={'open-tab' + (t.key === activeKey ? ' current' : '')}>
                   <span className={'open-tab-dot ' + (t.ended ? 'dot-ended' : t.terminalId ? 'dot-live' : 'dot-opening')} />
                   <button className="open-tab-label" title={t.ended ?? undefined}
-                          onClick={() => setActiveKey(t.key)}>
+                          onClick={() => focusTab(t.key)}>
                     {t.label}
                   </button>
                   <button className="open-tab-close" aria-label={`Close ${t.label}`}
@@ -274,6 +464,8 @@ export function Workspace({ active }: { active: boolean }) {
           onDeleteFolder={(folder) => void deleteFolder(folder)}
           onNewSessionIn={(folderId) => setPanel({ kind: 'session', session: null, folderId })}
           onNewFolderIn={(parentId) => setPanel({ kind: 'folder', folder: null, parentId })}
+          onEditSession={(session) => setPanel({ kind: 'session', session, folderId: session.folder_id })}
+          onDeleteSession={(session) => void deleteSession(session)}
           onMove={(kind, id, destination) => void move(kind, id, destination)}
         />
 
@@ -292,6 +484,12 @@ export function Workspace({ active }: { active: boolean }) {
                 </li>
               ))}
             </ul>
+            {orphans.length > 1 && (
+              <button className="link"
+                      onClick={() => orphans.forEach((t) => reattach(t))}>
+                Reattach all {orphans.length}
+              </button>
+            )}
           </div>
         )}
 
@@ -335,9 +533,14 @@ export function Workspace({ active }: { active: boolean }) {
               key={tab.key}
               role="tab"
               aria-selected={tab.key === activeKey}
-              className={'tab' + (tab.key === activeKey ? ' active' : '')}
+              className={'tab' + (tab.key === activeKey ? ' active' : '')
+                + (tab.colour !== undefined ? ` tab-c${tab.colour}` : '')}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setTabMenu({ x: e.clientX, y: e.clientY, key: tab.key })
+              }}
             >
-              <button className="tab-label" onClick={() => setActiveKey(tab.key)}>
+              <button className="tab-label" onClick={() => focusTab(tab.key)}>
                 {tab.label}
                 {tab.ended && <span className="muted"> · ended</span>}
               </button>
@@ -347,6 +550,15 @@ export function Workspace({ active }: { active: boolean }) {
           ))}
 
           <div className="tabstrip-tools">
+            <label className="inline"
+                   title="Ask before pasting more than one line into a terminal">
+              <input
+                type="checkbox"
+                checked={prefs.pasteGuard}
+                onChange={(e) => setPrefs((p) => ({ ...p, pasteGuard: e.target.checked }))}
+              />
+              Paste guard
+            </label>
             <label className="inline">
               <input type="checkbox" checked={prefs.split}
                      onChange={(e) => setPrefs({ ...prefs, split: e.target.checked })} />
@@ -382,7 +594,14 @@ export function Workspace({ active }: { active: boolean }) {
           <SessionEditor
             session={panel.session}
             folderId={panel.folderId}
-            onSaved={() => { setPanel({ kind: 'none' }); void loadTree() }}
+            onSaved={(saved, connectNow) => {
+              setPanel({ kind: 'none' })
+              void loadTree()
+              // The saved connection is selected rather than dropped on the
+              // floor, and "Create and connect" does what it says.
+              setSelected(saved)
+              if (connectNow) connect(saved)
+            }}
             onCancel={() => setPanel({ kind: 'none' })}
           />
         )}
@@ -420,11 +639,19 @@ export function Workspace({ active }: { active: boolean }) {
                 fontSize={prefs.fontSize}
                 scrollback={prefs.scrollback}
                 active={tab.key === activeKey}
+                pasteGuard={prefs.pasteGuard}
                 otherTerminals={live}
                 onTerminalID={(id) => {
+                  // A fresh terminal id also means a successful redial, so
+                  // the record of the previous death is cleared with it.
                   setTabs((prev) =>
-                    prev.map((t) => (t.key === tab.key ? { ...t, terminalId: id } : t)))
+                    prev.map((t) =>
+                      t.key === tab.key ? { ...t, terminalId: id, ended: undefined } : t))
                   void loadLive()
+                }}
+                onReconnected={() => {
+                  setTabs((prev) =>
+                    prev.map((t) => (t.key === tab.key ? { ...t, ended: undefined } : t)))
                 }}
                 onEnded={(reason) => {
                   setTabs((prev) =>
@@ -449,6 +676,15 @@ export function Workspace({ active }: { active: boolean }) {
           <SnippetBar terminalId={activeTab && !activeTab.ended ? activeTab.terminalId ?? null : null} />
         )}
       </section>
+
+      {tabMenu && (
+        <ContextMenu
+          x={tabMenu.x}
+          y={tabMenu.y}
+          items={tabMenuItems(tabMenu.key)}
+          onClose={() => setTabMenu(null)}
+        />
+      )}
     </div>
   )
 }
@@ -464,6 +700,7 @@ function loadPrefs(): Prefs {
       scrollback: Number(parsed.scrollback) || DEFAULT_PREFS.scrollback,
       split: Boolean(parsed.split),
       tree: parsed.tree === undefined ? true : Boolean(parsed.tree),
+      pasteGuard: parsed.pasteGuard === undefined ? true : Boolean(parsed.pasteGuard),
     }
   } catch {
     return DEFAULT_PREFS

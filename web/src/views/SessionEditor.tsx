@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ApiError, api,
   type Credential, type LogonStep, type SavedSession, type Settings,
@@ -10,7 +10,7 @@ export interface SessionEditorProps {
   /** The connection being edited, or null when creating one. */
   session: SavedSession | null
   folderId: string
-  onSaved: (session: SavedSession) => void
+  onSaved: (session: SavedSession, connect: boolean) => void
   onCancel: () => void
 }
 
@@ -85,12 +85,26 @@ export function SessionEditor(props: SessionEditorProps) {
   const [hosts, setHosts] = useState<SavedSession[]>([])
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // Whether the pressed button asked for a connection as well as a save.
+  const connectAfter = useRef(false)
 
   useEffect(() => {
-    void api
-      .get<{ credentials: Credential[] }>('/api/credentials')
-      .then((r) => setCredentials(r.credentials ?? []))
-      .catch(() => setCredentials([]))
+    const fetchCredentials = () => {
+      void api
+        .get<{ credentials: Credential[] }>('/api/credentials')
+        .then((r) => setCredentials(r.credentials ?? []))
+        .catch(() => setCredentials([]))
+    }
+    fetchCredentials()
+    // Refetched on focus: the workspace stays mounted across tab switches,
+    // so a credential created on the Credentials tab mid-form would
+    // otherwise never appear in this dropdown.
+    window.addEventListener('focus', fetchCredentials)
+    document.addEventListener('visibilitychange', fetchCredentials)
+    return () => {
+      window.removeEventListener('focus', fetchCredentials)
+      document.removeEventListener('visibilitychange', fetchCredentials)
+    }
   }, [])
 
   useEffect(() => {
@@ -172,7 +186,7 @@ export function SessionEditor(props: SessionEditorProps) {
       const saved = editing
         ? await api.patch<SavedSession>(`/api/tree/sessions/${editing.id}`, body)
         : await api.post<SavedSession>('/api/tree/sessions', body)
-      props.onSaved(saved)
+      props.onSaved(saved, connectAfter.current)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err))
     } finally {
@@ -447,8 +461,15 @@ export function SessionEditor(props: SessionEditorProps) {
       {error && <div className="error">{error}</div>}
 
       <div className="row">
-        <button type="submit" disabled={saving}>
-          {saving ? 'Saving…' : editing ? 'Save changes' : 'Create connection'}
+        {!editing && (
+          <button type="submit" className="primary" disabled={saving}
+                  onClick={() => { connectAfter.current = true }}>
+            {saving ? 'Saving…' : 'Create and connect'}
+          </button>
+        )}
+        <button type="submit" disabled={saving}
+                onClick={() => { connectAfter.current = false }}>
+          {saving ? 'Saving…' : editing ? 'Save changes' : 'Create only'}
         </button>
         <button type="button" onClick={props.onCancel}>Cancel</button>
       </div>

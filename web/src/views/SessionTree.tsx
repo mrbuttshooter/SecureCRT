@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Folder, SavedSession, Tree } from '../api'
+import { ContextMenu, type MenuItem } from '../ContextMenu'
 
 export interface SessionTreeProps {
   tree: Tree
@@ -13,6 +14,8 @@ export interface SessionTreeProps {
   onDeleteFolder: (folder: Folder) => void
   onNewSessionIn: (folderId: string) => void
   onNewFolderIn: (folderId: string) => void
+  onEditSession: (session: SavedSession) => void
+  onDeleteSession: (session: SavedSession) => void
   /** Move an item to a folder. Empty destination means the top level. */
   onMove: (kind: 'folder' | 'session', id: string, destinationFolderId: string) => void
 }
@@ -44,6 +47,7 @@ export function SessionTree(props: SessionTreeProps) {
   const { tree, filter } = props
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [dragging, setDragging] = useState<{ kind: 'folder' | 'session'; id: string } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
 
   const roots = useMemo(() => buildTree(tree), [tree])
@@ -95,6 +99,16 @@ export function SessionTree(props: SessionTreeProps) {
       draggable
       onDragStart={() => setDragging({ kind: 'session', id: s.id })}
       onDragEnd={() => { setDragging(null); setDropTarget(null) }}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        props.onSelect(s)
+        setMenu({ x: e.clientX, y: e.clientY, items: [
+          { label: 'Connect', onClick: () => props.onOpen(s) },
+          { label: 'Edit…', onClick: () => props.onEditSession(s) },
+          { label: '—', disabled: true, onClick: () => {} },
+          { label: 'Delete…', danger: true, onClick: () => props.onDeleteSession(s) },
+        ] })
+      }}
     >
       <button
         className="tree-label"
@@ -147,6 +161,29 @@ export function SessionTree(props: SessionTreeProps) {
           }}
           onDragLeave={() => setDropTarget((t) => (t === node.folder.id ? null : t))}
           onDrop={(e) => { e.preventDefault(); dropInto(node.folder.id) }}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            const inside = sessionsUnder(node)
+            setMenu({ x: e.clientX, y: e.clientY, items: [
+              { label: 'New connection here', onClick: () => props.onNewSessionIn(node.folder.id) },
+              { label: 'New folder here', onClick: () => props.onNewFolderIn(node.folder.id) },
+              { label: 'Folder defaults…', onClick: () => props.onEditFolder(node.folder) },
+              { label: '—', disabled: true, onClick: () => {} },
+              {
+                label: `Connect all ${inside.length}`,
+                disabled: inside.length === 0,
+                onClick: () => {
+                  // A rack can be forty-eight lines; a misplaced click must
+                  // not open forty-eight sessions unasked.
+                  if (inside.length <= 5 || window.confirm(
+                    `Open ${inside.length} terminals, one per connection in “${node.folder.name}”?`,
+                  )) inside.forEach((s) => props.onOpen(s))
+                },
+              },
+              { label: '—', disabled: true, onClick: () => {} },
+              { label: 'Delete…', danger: true, onClick: () => props.onDeleteFolder(node.folder) },
+            ] })
+          }}
         >
           <button
             className="tree-twisty"
@@ -198,8 +235,18 @@ export function SessionTree(props: SessionTreeProps) {
           {needle ? 'Nothing matches.' : 'No saved connections yet.'}
         </p>
       )}
+
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menu.items}
+                     onClose={() => setMenu(null)} />
+      )}
     </div>
   )
+}
+
+/** Every saved connection in a folder and its subfolders. */
+function sessionsUnder(node: Node): SavedSession[] {
+  return [...node.sessions, ...node.children.flatMap(sessionsUnder)]
 }
 
 function buildTree(tree: Tree): Node[] {

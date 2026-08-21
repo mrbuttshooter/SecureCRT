@@ -443,9 +443,13 @@ button.snip:hover:not(:disabled) { border-color: var(--snip, var(--accent)); }
 .snippet-bar-form button { padding: 0.25rem 0.6rem; font-size: 0.85rem; }
 
 .tabstrip {
-  display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 0.25rem;
+  /* One row: fifteen tabs scroll sideways rather than eating terminal rows. */
+  flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin;
   border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; margin-bottom: 0.5rem;
 }
+.tabstrip .tab { flex: none; }
+.tabstrip-tools { flex: none; }
 .tab {
   display: flex; align-items: center; gap: 0.25rem;
   border: 1px solid var(--border); border-radius: var(--radius);
@@ -454,6 +458,21 @@ button.snip:hover:not(:disabled) { border-color: var(--snip, var(--accent)); }
   transition: border-color 120ms ease;
 }
 .tab.active { border-color: var(--accent); box-shadow: var(--glow); }
+
+/* A tab marked with a colour keeps a fat keyline on its left edge whatever
+   its active state — "production is the red one" must survive tab switching. */
+.tab.tab-c0 { box-shadow: inset 3px 0 0 var(--ok); }
+.tab.tab-c1 { box-shadow: inset 3px 0 0 #58a6ff; }
+.tab.tab-c2 { box-shadow: inset 3px 0 0 var(--warn-border); }
+.tab.tab-c3 { box-shadow: inset 3px 0 0 #bc8cff; }
+.tab.tab-c4 { box-shadow: inset 3px 0 0 #39c5cf; }
+.tab.tab-c5 { box-shadow: inset 3px 0 0 var(--danger); }
+.tab.active.tab-c0 { box-shadow: inset 3px 0 0 var(--ok), var(--glow); }
+.tab.active.tab-c1 { box-shadow: inset 3px 0 0 #58a6ff, var(--glow); }
+.tab.active.tab-c2 { box-shadow: inset 3px 0 0 var(--warn-border), var(--glow); }
+.tab.active.tab-c3 { box-shadow: inset 3px 0 0 #bc8cff, var(--glow); }
+.tab.active.tab-c4 { box-shadow: inset 3px 0 0 #39c5cf, var(--glow); }
+.tab.active.tab-c5 { box-shadow: inset 3px 0 0 var(--danger), var(--glow); }
 .tab-label {
   background: none; border: none; padding: 0; color: inherit; font: inherit;
   font-family: var(--mono); font-size: 0.82rem; cursor: pointer;
@@ -787,3 +806,60 @@ table.grid th {
 }
 .triggers .trigger .row { align-items: flex-end; }
 .triggers .trigger input[type="number"] { width: 5rem; }
+
+/* --- context menu -----------------------------------------------------------
+
+   One menu for tabs and tree rows alike. Fixed positioning because it sits
+   at the pointer, above everything including xterm's canvas stack. */
+
+.context-menu {
+  position: fixed; z-index: 200; min-width: 12rem;
+  padding: 0.25rem; background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.context-menu-item {
+  display: block; width: 100%; text-align: left;
+  background: none; border: none; border-radius: 4px;
+  padding: 0.35rem 0.6rem; font-size: 0.88rem; color: var(--text);
+  cursor: pointer;
+}
+.context-menu-item:hover:not(:disabled) { background: var(--accent-soft); }
+.context-menu-item:disabled { color: var(--muted); cursor: default; }
+.context-menu-item.danger { color: var(--danger); }
+.context-menu-break { border-top: 1px solid var(--border); margin: 0.25rem 0.4rem; }
+
+/* --- quick connect ----------------------------------------------------------
+
+   The SecureCRT "Enter host" bar, at the top of the sidebar where the eye
+   starts. The input carries the weight; the credential select stays narrow. */
+
+.quick-connect {
+  display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.5rem;
+}
+.quick-connect input {
+  flex: 1 1 100%; font-family: var(--mono); font-size: 0.85rem;
+}
+.quick-connect select { flex: 1 1 8rem; min-width: 0; font-size: 0.85rem; padding: 0.3rem 0.4rem; }
+.quick-connect button { flex: none; font-size: 0.85rem; padding: 0.3rem 0.65rem; }
+.quick-error { flex: 1 1 100%; margin: 0; font-size: 0.82rem; padding: 0.4rem 0.6rem; }
+
+/* --- pane facts & paste guard ----------------------------------------------- */
+
+.pane-facts {
+  display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0;
+  color: var(--muted);
+}
+.pane-facts .mono { font-size: 0.75rem; word-break: normal; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.pane-facts .dims { flex: none; }
+.lines-back { color: var(--warn-border); }
+
+/* The preview is the point of the dialog: what, exactly, is about to run. */
+.paste-preview {
+  margin: 0 0 0.75rem; padding: 0.5rem 0.6rem;
+  max-height: 14rem; overflow: auto;
+  font-family: var(--mono); font-size: 0.8rem; line-height: 1.4;
+  white-space: pre; background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}

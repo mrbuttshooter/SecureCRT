@@ -1,0 +1,96 @@
+- generic [ref=f1e1]:
+  - link "Skip to main content" [ref=f1e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=f1e6]:
+    - generic:
+      - banner [ref=f1e7]
+      - generic:
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - tabpanel:
+                              - dialog "Log in to use old Reddit" [ref=f1e35]:
+                                - generic [ref=f1e39]:
+                                  - heading "Log in to use old Reddit" [level=1] [ref=f1e40]
+                                  - paragraph [ref=f1e41]:
+                                    - text: To keep Reddit safe, accounts are required to access old Reddit. Log in, or continue without an account on
+                                    - link "reddit.com" [active] [ref=f1e42] [cursor=pointer]:
+                                      - /url: https://www.reddit.com
+                                    - text: .
+                                  - paragraph [ref=f1e43]:
+                                    - text: By continuing, you agree to our
+                                    - link "User Agreement" [ref=f1e44] [cursor=pointer]:
+                                      - /url: https://www.redditinc.com/policies/user-agreement
+                                    - text: and acknowledge that you understand the
+                                    - link "Privacy Policy" [ref=f1e45] [cursor=pointer]:
+                                      - /url: https://www.redditinc.com/policies/privacy-policy
+                                    - text: .
+                                  - generic [ref=f1e46]:
+                                    - generic [ref=f1e53]:
+                                      - button "Συνέχεια με την Google. Ανοίγει σε νέα καρτέλα" [ref=f1e55] [cursor=pointer]:
+                                        - generic [ref=f1e57]: Συνέχεια με την Google
+                                      - iframe
+                                    - link "Email me a one-time link" [ref=f1e68] [cursor=pointer]:
+                                      - /url: https://www.reddit.com/login/
+                                    - generic [ref=f1e74]:
+                                      - separator [ref=f1e75]
+                                      - generic [ref=f1e76]: OR
+                                      - separator [ref=f1e77]
+                                  - group [ref=f1e78]:
+                                    - generic [ref=f1e83]:
+                                      - generic:
+                                        - generic: Email or username
+                                        - text: "*"
+                                      - textbox "Email or username" [ref=f1e84]
+                                  - group [ref=f1e89]:
+                                    - generic [ref=f1e93]:
+                                      - generic [ref=f1e94]:
+                                        - generic:
+                                          - generic: Password
+                                          - text: "*"
+                                        - textbox "Password" [ref=f1e95]
+                                      - button "Show password" [ref=f1e99] [cursor=pointer]
+                                  - link "Forgot password?" [ref=f1e113] [cursor=pointer]:
+                                    - /url: https://www.reddit.com/password/
+                                  - generic [ref=f1e115]:
+                                    - text: New to Reddit?
+                                    - link "Sign Up" [ref=f1e117] [cursor=pointer]:
+                                      - /url: https://www.reddit.com/register/
+                                - generic [ref=f1e122]:
+                                  - button "Log In" [disabled]
+                            - generic: back
+                            - generic: back
+      - dialog "Data Protection Consent" [ref=f1e124]:
+        - generic [ref=f1e125]:
+          - generic [ref=f1e127]:
+            - generic:
+              - button "Close" [ref=f1e131] [cursor=pointer]
+              - generic [ref=f1e136]:
+                - generic [ref=f1e137]: Let us know your cookie preferences
+                - generic [ref=f1e140]:
+                  - paragraph [ref=f1e141]: "Reddit uses cookies and similar technologies to:"
+                  - list [ref=f1e142]:
+                    - listitem [ref=f1e143]: Keep the website operational and running properly
+                    - listitem [ref=f1e144]: Prevent fraud and abuse
+                    - listitem [ref=f1e145]: Monitor site usage and performance metrics
+                  - paragraph [ref=f1e146]: "If you choose “Accept All” we’ll also use cookies to:"
+                  - list [ref=f1e147]:
+                    - listitem [ref=f1e148]: Personalize your recommendations and ads
+                    - listitem [ref=f1e149]: Measure the performance of ads
+                    - listitem [ref=f1e150]: Develop and improve new features and services
+                  - paragraph [ref=f1e151]: If you choose “Reject Optional Cookies” we won’t use cookies for these additional uses. You can update your cookie preference from your settings.
+                  - paragraph [ref=f1e152]:
+                    - text: Learn more about
+                    - link "how Reddit uses cookies" [ref=f1e153] [cursor=pointer]:
+                      - /url: /en-us/policies/cookies
+                    - text: .
+          - generic [ref=f1e155]:
+            - button "Reject Optional Cookies" [ref=f1e156] [cursor=pointer]
+            - button "Accept All" [ref=f1e159] [cursor=pointer]

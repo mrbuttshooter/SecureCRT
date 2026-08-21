@@ -1,0 +1,12 @@
+[      80ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://www.g2.com/compare/mobaxterm-vs-securecrt:0
+[    2826ms] [WARNING] Error: Google tag G-MFZ5NDXZ5F loaded before Consent Mode update. Please review and resolve Google Consent Mode sequencing. See https://docs.osano.com/en-US/osano/article/3f5e8_G7-verify-and-troubleshoot-your-google-consent-mode-installation @ https://www.g2.com/compare/mobaxterm-vs-securecrt:825
+[    2893ms] [WARNING] [GSI_LOGGER]: Relative login_uri was provided. Use absolute url instead. Relative login_uri may be considered invalid in the future. @ https://www.g2.com/compare/mobaxterm-vs-securecrt:825
+[    3115ms] [ERROR] Not signed in with the identity provider. @ https://www.g2.com/compare/mobaxterm-vs-securecrt:0
+[    3117ms] [WARNING] Tried to initialize drilldown on an element that already has a Foundation plugin. @ https://www.g2.com/compare/mobaxterm-vs-securecrt:825
+[    3118ms] [WARNING] Tried to initialize off-canvas on an element that already has a Foundation plugin. @ https://www.g2.com/compare/mobaxterm-vs-securecrt:825
+[    3152ms] [WARNING] Tried to initialize drilldown on an element that already has a Foundation plugin. @ https://www.g2.com/compare/mobaxterm-vs-securecrt:825
+[    3152ms] [WARNING] Tried to initialize off-canvas on an element that already has a Foundation plugin. @ https://www.g2.com/compare/mobaxterm-vs-securecrt:825
+[    3246ms] [ERROR] Analytics not enabled @ https://www.g2.com/compare/mobaxterm-vs-securecrt:825
+[    3270ms] [ERROR] Analytics not enabled @ https://www.g2.com/compare/mobaxterm-vs-securecrt:825
+[    5629ms] [WARNING] Unrecognized feature: 'speech-recognition'. @ https://cmp.osano.com/Azqe3XTG0NugLuZ/509014bb-9af4-43fc-8271-bd15f1a7fb2b/osano.js?v1:0
+[    6978ms] [ERROR] [GSI_LOGGER]: FedCM get() rejects with NetworkError: Error retrieving a token. @ https://www.g2.com/compare/mobaxterm-vs-securecrt:825

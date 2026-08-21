@@ -12,6 +12,7 @@ import { BroadcastMenu, SnippetMenu } from './SessionTools'
 import { Highlighter } from './highlight'
 import { THEMES, type ThemeName } from './themes'
 import { registerHighlighter, registerTerminal, unregisterTerminal } from './screen'
+import { commandFor } from './keys'
 
 export interface TerminalPaneProps {
   /** Stable key for this pane, unique among the open tabs. */
@@ -27,6 +28,9 @@ export interface TerminalPaneProps {
   /** Focus this pane when it becomes the active tab. */
   active: boolean
 
+  /** Ask before pasting more than one line. A preference, default on. */
+  pasteGuard: boolean
+
   /**
    * The user's other live terminals, for the broadcast group.
    *
@@ -38,6 +42,8 @@ export interface TerminalPaneProps {
 
   onTerminalID: (id: string) => void
   onEnded: (reason: string) => void
+  /** The pane redialled: the tab's record of death should be cleared. */
+  onReconnected?: () => void
 }
 
 /** A notice on the pane: a rule fired, a warning, a snippet went out. */
@@ -74,6 +80,9 @@ export function TerminalPane(props: TerminalPaneProps) {
   const [showSearch, setShowSearch] = useState(false)
 
   const [notices, setNotices] = useState<Notice[]>([])
+  const [pendingPaste, setPendingPaste] = useState<string | null>(null)
+  const [dims, setDims] = useState<{ cols: number; rows: number } | null>(null)
+  const [linesBack, setLinesBack] = useState(0)
   const [recorded, setRecorded] = useState(false)
   const [terminalId, setTerminalId] = useState(props.terminalId ?? '')
   const [group, setGroup] = useState<string[]>([])
@@ -233,20 +242,77 @@ export function TerminalPane(props: TerminalPaneProps) {
         // The page was not focused, or the browser said no. Ctrl+C still works.
       })
     })
+
+    // Every paste funnels through one gate. Multi-line text stops for a
+    // confirmation, because on the devices this product drives — IOS, NX-OS,
+    // JunOS — bracketed paste is off and every newline executes on arrival.
+    // One misdirected right-click must not configure a core switch.
+    const gatePaste = (text: string) => {
+      if (!text) return
+      const multiline = /[\r\n]/.test(text.replace(/[\r\n]+$/, ''))
+      if (multiline && callbacks.current.pasteGuard) setPendingPaste(text)
+      else xterm.paste(text)
+    }
+
     const screen = host.current
     const onContextMenu = (event: MouseEvent) => {
       event.preventDefault()
       navigator.clipboard
         ?.readText()
-        .then((text) => {
-          if (text) xterm.paste(text)
-        })
+        .then(gatePaste)
         .catch(() => {
           say('warning',
             'The browser refused clipboard access. Allow it in the address bar, or paste with Ctrl+Shift+V.')
         })
     }
     screen?.addEventListener('contextmenu', onContextMenu)
+
+    // Capture phase, so this runs before xterm's own paste handling: the
+    // event must be stopped here or the bytes are already on the wire.
+    const onPaste = (event: ClipboardEvent) => {
+      const text = event.clipboardData?.getData('text/plain') ?? ''
+      const multiline = /[\r\n]/.test(text.replace(/[\r\n]+$/, ''))
+      if (!multiline || !callbacks.current.pasteGuard) return
+      event.preventDefault()
+      event.stopPropagation()
+      setPendingPaste(text)
+    }
+    screen?.addEventListener('paste', onPaste, true)
+
+    // App chords are claimed before xterm can forward them to the host:
+    // returning false stops the ESC-sequence from reaching the switch, while
+    // the DOM event still bubbles to the workspace's own listener, which is
+    // where tab switching actually happens.
+    xterm.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown') return true
+      const command = commandFor(event)
+      if (!command) return true
+      if (command.kind === 'find') {
+        event.preventDefault()
+        setShowSearch(true)
+        return false
+      }
+      if (command.kind === 'broadcast') {
+        event.preventDefault()
+        setMenu((m) => (m === 'broadcast' ? 'none' : 'broadcast'))
+        return false
+      }
+      return false
+    })
+
+    // The readouts SecureCRT keeps in its status bar: the grid, and how far
+    // back in the scrollback you are — because "why is my command not doing
+    // anything" is so often "you are four thousand lines up".
+    const sizeChanged = xterm.onResize(({ cols, rows }) => setDims({ cols, rows }))
+    setDims({ cols: xterm.cols, rows: xterm.rows })
+    const scrolled = xterm.onScroll(() => {
+      const buffer = xterm.buffer.active
+      setLinesBack(buffer.baseY - buffer.viewportY)
+    })
+    const wrote = xterm.onWriteParsed(() => {
+      const buffer = xterm.buffer.active
+      setLinesBack(buffer.baseY - buffer.viewportY)
+    })
 
     // ResizeObserver rather than a window listener: a split pane changes size
     // without the window doing anything.
@@ -263,7 +329,11 @@ export function TerminalPane(props: TerminalPaneProps) {
     return () => {
       observer.disconnect()
       copyOnSelect.dispose()
+      sizeChanged.dispose()
+      scrolled.dispose()
+      wrote.dispose()
       screen?.removeEventListener('contextmenu', onContextMenu)
+      screen?.removeEventListener('paste', onPaste, true)
       marks.dispose()
       unregisterTerminal(callbacks.current.paneKey)
       typed.dispose()
@@ -321,6 +391,23 @@ export function TerminalPane(props: TerminalPaneProps) {
     socket.current?.answerHostKey(accepted)
   }
 
+  // Reconnect redials in place: same pane, same xterm, same scrollback. What
+  // the switch printed before it dropped you is usually the thing you were
+  // reading, so recreating the terminal would destroy the evidence. A rule is
+  // written into the buffer so old output and new cannot be confused.
+  const reconnect = () => {
+    const sock = socket.current
+    const xterm = term.current
+    if (!sock || !xterm || !sock.canReopen) return
+    setFailure(null)
+    setChanged(null)
+    const at = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    xterm.writeln(`\r\n\x1b[2m\u2500\u2500\u2500 reconnecting ${at} \u2500\u2500\u2500\x1b[0m`)
+    if (sock.reopen()) callbacks.current.onReconnected?.()
+  }
+
+  const canReconnect = Boolean(socket.current?.canReopen)
+
   const setBroadcast = (terminals: string[]) => {
     // Set on the server, which re-checks every terminal against this user
     // before anything reaches it. The state here follows the acknowledgement
@@ -346,6 +433,21 @@ export function TerminalPane(props: TerminalPaneProps) {
       <div className="pane-status" role="status">
         <StatusPill state={state} detail={detail} />
         <span className="pane-label">{props.label}</span>
+        <PaneFacts
+          terminalId={terminalId}
+          terminals={props.otherTerminals}
+          dims={dims}
+        />
+        {state === 'ended' && canReconnect && (
+          <button className="link" onClick={reconnect}>Reconnect</button>
+        )}
+        {linesBack > 0 && (
+          <button className="link lines-back"
+                  title="Jump back to the live end of the scrollback"
+                  onClick={() => term.current?.scrollToBottom()}>
+            {linesBack} lines up {'↓'}
+          </button>
+        )}
         {recorded && (
           <span className="tag warn-tag" title="Output is being written to a transcript">
             recording
@@ -483,6 +585,42 @@ export function TerminalPane(props: TerminalPaneProps) {
           <div className="card" role="alert">
             <h2>Could not connect</h2>
             <p>{failure}</p>
+            {canReconnect && (
+              <div className="row">
+                <button className="primary" onClick={reconnect}>Reconnect</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {pendingPaste !== null && (
+        <div className="pane-overlay">
+          <div className="card" role="alertdialog" aria-label="Confirm this paste">
+            <h2>
+              Paste {pendingPaste.split('\n').length} lines
+              {group.length > 0 ? ` into ${group.length + 1} terminals` : ''}?
+            </h2>
+            {group.length > 0 && (
+              <p className="warn">
+                This keyboard is broadcasting: every terminal in the group
+                receives all of it.
+              </p>
+            )}
+            <p className="muted">
+              Each line runs as it arrives {'—'} network devices do not wait
+              for the end of a paste.
+            </p>
+            <pre className="paste-preview">{pendingPaste}</pre>
+            <div className="row">
+              <button className="primary" autoFocus
+                      onClick={() => { term.current?.paste(pendingPaste); setPendingPaste(null); term.current?.focus() }}>
+                Paste
+              </button>
+              <button onClick={() => { setPendingPaste(null); term.current?.focus() }}>
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -508,4 +646,34 @@ const DETAIL_LABELS: Record<string, string> = {
 function StatusPill({ state, detail }: { state: LinkState; detail: string }) {
   const text = DETAIL_LABELS[detail] ?? STATE_LABELS[state]
   return <span className={`pill pill-${state}`}>{text}</span>
+}
+
+/**
+ * PaneFacts is the always-on part of the status bar: who and where this
+ * terminal is, whether it is encrypted, and the grid. All of it comes from
+ * state already in the browser — the live-terminals list the workspace polls
+ * and the xterm instance itself — so it costs no extra request.
+ */
+function PaneFacts({ terminalId, terminals, dims }: {
+  terminalId: string
+  terminals: LiveTerminal[]
+  dims: { cols: number; rows: number } | null
+}) {
+  const info = terminals.find((t) => t.id === terminalId)
+  return (
+    <span className="pane-facts">
+      {info && (
+        <span className="mono">
+          {info.username ? `${info.username}@` : ''}{info.host}
+          {info.port ? `:${info.port}` : ''}
+        </span>
+      )}
+      {info && !info.encrypted && (
+        <span className="tag warn-tag" title="This protocol sends everything, including passwords, in the clear">
+          not encrypted
+        </span>
+      )}
+      {dims && <span className="mono dims">{dims.cols}{'×'}{dims.rows}</span>}
+    </span>
+  )
 }
