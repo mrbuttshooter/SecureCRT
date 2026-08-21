@@ -26,6 +26,7 @@ import (
 	"github.com/mrbuttshooter/securecrt/internal/snippets"
 	"github.com/mrbuttshooter/securecrt/internal/store"
 	"github.com/mrbuttshooter/securecrt/internal/store/storetest"
+	"github.com/mrbuttshooter/securecrt/internal/teams"
 	"github.com/mrbuttshooter/securecrt/internal/terminal"
 	"github.com/mrbuttshooter/securecrt/internal/users"
 	"github.com/mrbuttshooter/securecrt/internal/vault"
@@ -151,6 +152,7 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 		Audit:        audit.NewRecorder(db, quiet),
 		MasterKey:    master,
 		SessionTree:  sessionTree,
+		Teams:        teams.NewStore(db),
 		Terminals:    terminals,
 		FileSessions: fileSessions,
 		Transfers:    transfers,

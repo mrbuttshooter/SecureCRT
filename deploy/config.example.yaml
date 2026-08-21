@@ -154,6 +154,12 @@ policy:
 
   record_all_sessions: false
 
+  # Delete session transcripts older than this many days. Zero — the default —
+  # keeps them forever, because a record nobody should silently lose is one you
+  # keep until you choose a policy. Set it once you have decided how long a
+  # transcript is worth keeping against what it holds.
+  transcript_retention_days: 0
+
   # The two endpoints that accept a large body. Neither is a limit on what can
   # be transferred: the file browser splits a large upload into chunks and
   # resumes each at an offset, so max_upload_bytes bounds one request. A
