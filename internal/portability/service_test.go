@@ -432,8 +432,32 @@ func TestRenameOnConflictImportsAlongside(t *testing.T) {
 	if len(names) != 4 {
 		t.Fatalf("connections = %v, want four", names)
 	}
-	if !contains(names, "core-sw-01") || !contains(names, "core-sw-01 (2)") {
-		t.Errorf("connections = %v, want the original and a renamed copy", names)
+
+	// Conflicts are per folder, so the rename lands on the FOLDER and the
+	// sessions inside it keep their names: "Switches (2)/core-sw-01" reads
+	// as the copy it is, where "core-sw-01 (2)" scattered through the
+	// original folder would not. Both copies of each name must exist.
+	count := map[string]int{}
+	for _, name := range names {
+		count[name]++
+	}
+	if count["core-sw-01"] != 2 || count["jump-host"] != 2 {
+		t.Errorf("connections = %v, want each name twice across the original and renamed folders", names)
+	}
+
+	var folderNames []string
+	for _, folder := range tree.Folders {
+		folderNames = append(folderNames, folder.Name)
+	}
+	sort.Strings(folderNames)
+	renamed := false
+	for _, name := range folderNames {
+		if strings.Contains(name, "(2)") {
+			renamed = true
+		}
+	}
+	if !renamed {
+		t.Errorf("folders = %v, want a renamed copy alongside the original", folderNames)
 	}
 }
 

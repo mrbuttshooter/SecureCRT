@@ -87,7 +87,13 @@ func walkXMLSessions(node xmlNode, folders []string, opts ReadOptions, result *R
 			continue
 		}
 
-		walkXMLSessions(child, append(folders, child.Name), opts, result)
+		// A fresh slice per branch: append(folders, ...) reuses the parent's
+		// backing array, and siblings sharing it silently rewrite each
+		// other's paths — sessions land in the wrong folders.
+		branch := make([]string, 0, len(folders)+1)
+		branch = append(branch, folders...)
+		branch = append(branch, child.Name)
+		walkXMLSessions(child, branch, opts, result)
 	}
 }
 

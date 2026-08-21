@@ -256,9 +256,17 @@ func (s *Service) Preview(ctx context.Context, payload Payload, opts ImportOptio
 	for _, folder := range tree.Folders {
 		existingFolders[strings.ToLower(folder.Name)] = folder.ID
 	}
+	// Sessions are keyed by folder AND name: the same device name in two
+	// folders is an ordinary thing for a tree to hold — every "copy of a
+	// colleague's rack" does it — and treating it as a collision silently
+	// dropped exactly those sessions from real imports.
+	folderNames := map[string]string{}
+	for _, folder := range tree.Folders {
+		folderNames[folder.ID] = strings.ToLower(folder.Name)
+	}
 	existingSessions := map[string]string{}
 	for _, session := range tree.Sessions {
-		existingSessions[strings.ToLower(session.Name)] = session.ID
+		existingSessions[folderNames[session.FolderID]+"/"+strings.ToLower(session.Name)] = session.ID
 	}
 	existingCredentials := map[string]string{}
 	for _, cred := range stored {
@@ -282,8 +290,13 @@ func (s *Service) Preview(ctx context.Context, payload Payload, opts ImportOptio
 		plan.NewFolders = append(plan.NewFolders, folder.Name)
 	}
 
+	payloadFolderNames := map[string]string{}
+	for _, folder := range payload.Folders {
+		payloadFolderNames[folder.ID] = strings.ToLower(folder.Name)
+	}
 	for _, session := range payload.Sessions {
-		if id, clash := existingSessions[strings.ToLower(session.Name)]; clash {
+		key := payloadFolderNames[session.FolderID] + "/" + strings.ToLower(session.Name)
+		if id, clash := existingSessions[key]; clash {
 			plan.Conflicts = append(plan.Conflicts,
 				Conflict{Kind: "connection", Name: session.Name, Existing: id})
 			continue
@@ -355,13 +368,18 @@ func (s *Service) Import(ctx context.Context, key vault.Key, payload Payload, op
 		return Result{}, fmt.Errorf("portability: read the credentials: %w", err)
 	}
 
-	takenFolders := map[string]bool{}
+	// Name to existing id, not a bare set: when a conflicting folder is
+	// skipped, its sessions must still land in the folder that is already
+	// here — otherwise a re-import quietly dumps a rack at the root.
+	takenFolders := map[string]string{}
 	for _, folder := range tree.Folders {
-		takenFolders[strings.ToLower(folder.Name)] = true
+		takenFolders[strings.ToLower(folder.Name)] = folder.ID
 	}
+	// Keyed by destination folder id and name, for the same reason the plan
+	// keys by folder: names repeat across folders on purpose.
 	takenSessions := map[string]bool{}
 	for _, session := range tree.Sessions {
-		takenSessions[strings.ToLower(session.Name)] = true
+		takenSessions[session.FolderID+"/"+strings.ToLower(session.Name)] = true
 	}
 	takenCredentials := map[string]string{}
 	for _, cred := range stored {
@@ -413,14 +431,16 @@ func (s *Service) Import(ctx context.Context, key vault.Key, payload Payload, op
 
 	// Folders next, outermost first, so a parent exists before its children.
 	for _, folder := range inParentOrder(payload.Folders) {
-		if takenFolders[strings.ToLower(folder.Name)] {
+		if existing, clash := takenFolders[strings.ToLower(folder.Name)]; clash {
 			switch opts.OnConflict {
 			case ConflictSkip, ConflictReplace:
+				folderIDs[folder.ID] = existing
 				result.Skipped++
 				continue
 			case ConflictRename:
 				folder.Name = uniqueName(folder.Name, func(candidate string) bool {
-					return takenFolders[strings.ToLower(candidate)]
+					_, taken := takenFolders[strings.ToLower(candidate)]
+					return taken
 				})
 			}
 		}
@@ -451,7 +471,7 @@ func (s *Service) Import(ctx context.Context, key vault.Key, payload Payload, op
 		}
 
 		folderIDs[folder.ID] = created.ID
-		takenFolders[strings.ToLower(folder.Name)] = true
+		takenFolders[strings.ToLower(folder.Name)] = created.ID
 		result.Folders++
 	}
 
@@ -460,21 +480,23 @@ func (s *Service) Import(ctx context.Context, key vault.Key, payload Payload, op
 	sessionIDs := map[string]string{}
 
 	for _, session := range payload.Sessions {
-		if takenSessions[strings.ToLower(session.Name)] {
+		// The destination decides what a collision even means, so it is
+		// resolved before the check rather than after.
+		folder := opts.IntoFolder
+		if mapped, ok := folderIDs[session.FolderID]; ok {
+			folder = mapped
+		}
+
+		if takenSessions[folder+"/"+strings.ToLower(session.Name)] {
 			switch opts.OnConflict {
 			case ConflictSkip, ConflictReplace:
 				result.Skipped++
 				continue
 			case ConflictRename:
 				session.Name = uniqueName(session.Name, func(candidate string) bool {
-					return takenSessions[strings.ToLower(candidate)]
+					return takenSessions[folder+"/"+strings.ToLower(candidate)]
 				})
 			}
-		}
-
-		folder := opts.IntoFolder
-		if mapped, ok := folderIDs[session.FolderID]; ok {
-			folder = mapped
 		}
 
 		settings, err := unmarshalSettings(session.Settings)
@@ -505,7 +527,7 @@ func (s *Service) Import(ctx context.Context, key vault.Key, payload Payload, op
 		}
 
 		sessionIDs[session.ID] = created.ID
-		takenSessions[strings.ToLower(session.Name)] = true
+		takenSessions[folder+"/"+strings.ToLower(session.Name)] = true
 		result.Sessions++
 	}
 
