@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+
+	"github.com/mrbuttshooter/securecrt/internal/portability/securecrt"
 )
 
 // Turning an uploaded file into a payload.
@@ -80,6 +82,15 @@ func ReadUpload(source Source, filename string, data []byte, opts UploadOptions)
 		}, nil
 
 	case SourceSecureCRT:
+		// Two official containers: the zipped Config folder, and the single
+		// XML that Tools > Export Settings writes. The XML is often the only
+		// artefact a locked-down desktop can produce, so both are welcome.
+		if securecrt.IsSecureCRTXML(data) {
+			return FromSecureCRTXML(data, SecureCRTOptions{
+				ConfigPassphrase: opts.ConfigPassphrase,
+				SkipPasswords:    opts.SkipPasswords,
+			})
+		}
 		fsys, err := ArchiveFS(data, filename)
 		if err != nil {
 			return Import{}, err

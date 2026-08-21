@@ -73,6 +73,23 @@ func FromSecureCRT(fsys fs.FS, opts SecureCRTOptions) (Import, error) {
 	if err != nil {
 		return Import{}, fmt.Errorf("portability: read the SecureCRT configuration: %w", err)
 	}
+	return fromSecureCRTResult(result, opts)
+}
+
+// FromSecureCRTXML reads a Tools > Export Settings file — the same sessions
+// in their other official container.
+func FromSecureCRTXML(data []byte, opts SecureCRTOptions) (Import, error) {
+	result, err := securecrt.ReadXML(data, securecrt.ReadOptions{
+		ConfigPassphrase: opts.ConfigPassphrase,
+		SkipPasswords:    opts.SkipPasswords,
+	})
+	if err != nil {
+		return Import{}, fmt.Errorf("portability: read the SecureCRT settings export: %w", err)
+	}
+	return fromSecureCRTResult(result, opts)
+}
+
+func fromSecureCRTResult(result securecrt.Result, opts SecureCRTOptions) (Import, error) {
 
 	out := Import{
 		Source:   SourceSecureCRT,
