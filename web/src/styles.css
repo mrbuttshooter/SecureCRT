@@ -13,28 +13,31 @@
    No inline styles anywhere: the content security policy forbids them, and
    keeping to it is easier than retrofitting it after the fact. */
 
+/* The light window is the default: a plain Windows-style frame — grey
+   chrome, white surfaces, the system blue for selection — so the program
+   looks like the desktop tools around it, SecureCRT first among them. */
 :root {
-  --bg: #f4f6f8;
-  --bg-deep: #e9edf1;
+  --bg: #f0f0f0;
+  --bg-deep: #e6e6e6;
   --surface: #ffffff;
-  --surface-2: #eef1f5;
-  --border: #d3dae2;
-  --border-strong: #b6c0cc;
-  --text: #131a21;
-  --muted: #5a6673;
-  --accent: #0b7d68;
-  --accent-soft: rgba(11, 125, 104, 0.10);
+  --surface-2: #f7f7f7;
+  --border: #d6d6d6;
+  --border-strong: #adadad;
+  --text: #1b1b1b;
+  --muted: #5d5d5d;
+  --accent: #0067c0;
+  --accent-soft: rgba(0, 103, 192, 0.10);
   --accent-text: #ffffff;
-  --danger: #b3261e;
-  --danger-bg: #fdecea;
-  --warn-bg: #fdf6e3;
-  --warn-border: #c9a227;
-  --ok: #15803d;
-  --radius: 6px;
-  --radius-lg: 10px;
-  --shadow: 0 1px 2px rgba(15, 23, 32, 0.06), 0 8px 24px rgba(15, 23, 32, 0.06);
-  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --danger: #c42b1c;
+  --danger-bg: #fde7e9;
+  --warn-bg: #fff4ce;
+  --warn-border: #b98900;
+  --ok: #0f7b0f;
+  --radius: 3px;
+  --radius-lg: 4px;
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+  --sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --mono: Consolas, "Cascadia Mono", "DejaVu Sans Mono", Menlo, monospace;
   --glow: none;
 }
 
@@ -51,16 +54,16 @@
     --border-strong: #33404e;
     --text: #dbe4ec;
     --muted: #8b97a5;
-    --accent: #2dd4a8;
-    --accent-soft: rgba(45, 212, 168, 0.09);
-    --accent-text: #06231b;
+    --accent: #4ca8f0;
+    --accent-soft: rgba(76, 168, 240, 0.14);
+    --accent-text: #ffffff;
     --danger: #ff8a80;
     --danger-bg: #33201e;
     --warn-bg: #2c2515;
     --warn-border: #8f7526;
     --ok: #4ade80;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
-    --glow: 0 0 0 1px rgba(45, 212, 168, 0.25), 0 0 18px rgba(45, 212, 168, 0.12);
+    --glow: none;
   }
 }
 :root[data-theme="dark"] {
@@ -72,16 +75,16 @@
     --border-strong: #33404e;
     --text: #dbe4ec;
     --muted: #8b97a5;
-    --accent: #2dd4a8;
-    --accent-soft: rgba(45, 212, 168, 0.09);
-    --accent-text: #06231b;
+    --accent: #4ca8f0;
+    --accent-soft: rgba(76, 168, 240, 0.14);
+    --accent-text: #ffffff;
     --danger: #ff8a80;
     --danger-bg: #33201e;
     --warn-bg: #2c2515;
     --warn-border: #8f7526;
     --ok: #4ade80;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
-    --glow: 0 0 0 1px rgba(45, 212, 168, 0.25), 0 0 18px rgba(45, 212, 168, 0.12);
+    --glow: none;
 }
 
 * { box-sizing: border-box; }
@@ -93,7 +96,7 @@ body {
   min-height: 100%;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.55 var(--sans);
+  font: 13.5px/1.45 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -964,8 +967,10 @@ table.grid { table-layout: auto; }
 
 /* The pane's action links read as separate controls, not one run-on word. */
 .pane-tools { gap: 0; }
-.pane-tools > * { padding: 0 0.55rem; }
-.pane-tools > * + * { border-left: 1px solid var(--border); }
+/* Scoped through .pane-status so these outrank button.link, which otherwise
+   zeroes the padding and runs the four links together into one word. */
+.pane-status .pane-tools > * { padding: 0 0.55rem; }
+.pane-status .pane-tools > * + * { border-left: 1px solid var(--border); }
 .rec-start {
   border: 1px solid var(--border); border-radius: 999px;
   padding: 0.05rem 0.5rem; font-size: 0.75rem;
@@ -1000,3 +1005,565 @@ button.overflow {
 /* Row actions sit flush right and never overhang the table edge. */
 td.actions-cell { text-align: right; }
 td.actions-cell button + button, td.actions-cell button + a { margin-left: 0.5rem; }
+
+/* --- layouts ----------------------------------------------------------------
+
+   One, two, or all of them tiled. Two and tiled are the same grid with a
+   different column count, so the panes keep equal shares however many there
+   are; the focused pane in a multi-pane layout wears the accent, because
+   keystrokes follow it and that must be visible before typing. */
+
+.panes.layout-split, .panes.layout-grid {
+  display: grid; gap: 0.5rem; grid-auto-rows: minmax(0, 1fr);
+}
+.panes.cols-1 { grid-template-columns: minmax(0, 1fr); }
+.panes.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.panes.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.panes.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.pane-slot.focused .pane { border-color: var(--accent); box-shadow: var(--glow); }
+.layout-grid .pane-status { font-size: 0.72rem; }
+
+/* A narrow tile must not wrap its status bar into three lines that overlap:
+   the bar stays one row, the label and facts give way first, and the tools
+   on the right never shrink, because they are what you came to click. */
+.pane-status { white-space: nowrap; min-width: 0; overflow: hidden; }
+.pane-status > * { flex: none; }
+.pane-status > .pane-label {
+  flex: 0 1 auto; min-width: 2rem; overflow: hidden; text-overflow: ellipsis;
+}
+.pane-status > .pane-facts { flex: 0 1 auto; overflow: hidden; }
+.layout-grid .pane-facts .mono:not(.dims),
+.layout-split .pane-facts .mono:not(.dims) { display: none; }
+
+/* Full screen is the pane alone, edge to edge. */
+.pane:fullscreen { border: none; border-radius: 0; }
+
+/* The visual bell: a quick inset flash rather than the whole pane going
+   white, which at three in the morning is an assault. */
+.pane.ringing { box-shadow: inset 0 0 0 2px var(--warn-border); }
+.pane.ringing .pane-screen { filter: brightness(1.35); }
+
+/* --- tab news -----------------------------------------------------------------
+
+   Output on a tab you are not looking at turns its label bright; a bell
+   adds a note. SecureCRT's activity indicator, which is how a reload that
+   finished behind tab seven gets noticed. */
+
+.tab.has-activity .tab-label, .open-tab-label.has-activity {
+  color: var(--accent); font-weight: 600;
+}
+.tab.has-bell { border-color: var(--warn-border); }
+.bell-mark { color: var(--warn-border); font-size: 0.8rem; line-height: 1; }
+.tab-rename {
+  width: 9rem; padding: 0 0.3rem; font-family: var(--mono); font-size: 0.82rem;
+}
+
+/* --- tabstrip tools ---------------------------------------------------------- */
+
+.segmented {
+  display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden;
+}
+.segmented button {
+  border: none; border-radius: 0; background: var(--surface);
+  padding: 0.18rem 0.5rem; font-size: 0.9rem; line-height: 1.2; color: var(--muted);
+}
+.segmented button + button { border-left: 1px solid var(--border); }
+.segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+button.tool {
+  padding: 0.18rem 0.5rem; font-size: 0.85rem; line-height: 1.2;
+  font-family: var(--mono); color: var(--muted); background: var(--surface);
+}
+button.tool:hover { color: var(--text); }
+button.tool.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+/* --- pane extras -------------------------------------------------------------- */
+
+.pane-more { font-weight: 700; letter-spacing: 0.05em; }
+.zoom-badge { color: var(--muted); font-size: 0.72rem; }
+.countdown {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  color: var(--warn-border); font-size: 0.75rem;
+}
+.pane-sending {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.25rem 0.6rem; font-size: 0.8rem;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.pane-sending progress { flex: 1; max-width: 14rem; height: 0.5rem; }
+.paste-actions { align-items: center; }
+.paste-delay { margin-left: auto; color: var(--muted); }
+label.inline.paste-delay input { width: 4.5rem; padding: 0.2rem 0.4rem; font-family: var(--mono); }
+
+/* --- command window ------------------------------------------------------------
+
+   A composing line under the terminals. Monospace, because what is typed
+   here is a command and should look like the terminal it is going to. */
+
+.command-window {
+  margin-top: 0.5rem; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface);
+}
+.command-window-head {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.2rem 0.55rem; font-size: 0.78rem;
+  border-bottom: 1px solid var(--border); background: var(--surface-2);
+}
+.command-window-head .tag { margin-left: 0.4rem; }
+.command-window-hint { margin-left: auto; font-size: 0.72rem; }
+.command-window-body { display: flex; gap: 0.4rem; padding: 0.35rem; align-items: flex-end; }
+.command-window-input {
+  flex: 1; resize: none; font-family: var(--mono); font-size: 0.85rem;
+  line-height: 1.4; padding: 0.3rem 0.45rem;
+  /* The global textarea minimum is for editors; this grows by rows instead. */
+  min-height: 0;
+}
+.command-window-body button { padding: 0.32rem 0.9rem; }
+
+/* --- dialogs --------------------------------------------------------------------
+
+   The window-wide modal, for the few things that belong to the whole
+   workspace rather than one pane: settings, the finder, the shortcut sheet. */
+
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 150;
+  display: grid; place-items: start center; padding: 10vh 1rem 1rem;
+  background: rgba(7, 10, 14, 0.6); backdrop-filter: blur(2px);
+  overflow: auto;
+}
+.modal { width: min(38rem, 100%); margin: 0; box-shadow: var(--shadow); }
+.modal h2 { margin: 0; }
+.modal .spread { margin-bottom: 0.75rem; }
+.modal .spread .link { font-size: 1.3rem; line-height: 1; }
+.modal fieldset {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 0.6rem 0.75rem; margin: 0 0 0.75rem;
+}
+.modal legend {
+  padding: 0 0.3rem; font-size: 0.72rem; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--muted); font-weight: 600;
+}
+.modal fieldset .muted { font-size: 0.82rem; margin: 0.2rem 0 0.4rem; }
+.settings { width: min(44rem, 100%); }
+.settings-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0 0.75rem; align-items: end;
+}
+label.inline.settings-delay { margin: 0.3rem 0; }
+label.inline.settings-delay input { width: 4.5rem; font-family: var(--mono); }
+
+.finder-overlay { padding-top: 14vh; }
+.finder { width: min(40rem, 100%); padding: 0.5rem; }
+.finder-input { font-size: 1rem; padding: 0.55rem 0.7rem; margin: 0; }
+.finder-list {
+  list-style: none; margin: 0.4rem 0 0; padding: 0;
+  max-height: 50vh; overflow-y: auto;
+}
+.finder-item {
+  display: flex; align-items: baseline; gap: 0.6rem;
+  padding: 0.4rem 0.55rem; border-radius: 4px; cursor: pointer;
+}
+.finder-item.current { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.finder-kind {
+  flex: none; width: 3.2rem; font-family: var(--mono); font-size: 0.68rem;
+  text-transform: uppercase; color: var(--muted); letter-spacing: 0.04em;
+}
+.finder-name { flex: none; font-weight: 600; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.finder-meta { flex: 1; min-width: 0; font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.finder-meta .mono { font-size: 0.8rem; }
+.finder-empty { padding: 0.75rem 0.55rem; }
+.finder-hint { margin: 0.4rem 0.3rem 0; font-size: 0.75rem; }
+
+.shortcut-list { margin: 0 0 0.75rem; display: grid; gap: 0.15rem; }
+.shortcut-row {
+  display: grid; grid-template-columns: 13rem 1fr; gap: 0.75rem; align-items: baseline;
+  padding: 0.2rem 0; border-bottom: 1px solid var(--border);
+}
+.shortcut-row dd { margin: 0; }
+kbd {
+  display: inline-block; font-family: var(--mono); font-size: 0.78rem;
+  padding: 0.05rem 0.4rem; border: 1px solid var(--border-strong);
+  border-bottom-width: 2px; border-radius: 4px; background: var(--surface-2);
+  color: var(--text); white-space: nowrap;
+}
+
+/* --- recent connections --------------------------------------------------------- */
+
+.recent { border-bottom: 1px solid var(--border); padding: 0.5rem 0.6rem; }
+.recent h3 {
+  font-size: 0.72rem; letter-spacing: 0.05em; font-weight: 600;
+  text-transform: uppercase; color: var(--muted); margin: 0 0 0.3rem;
+}
+.recent ul.plain > li { border: none; padding: 0; }
+.recent-item {
+  display: flex; width: 100%; align-items: baseline; gap: 0.5rem;
+  background: none; border: none; padding: 0.12rem 0.25rem; border-radius: 4px;
+  color: inherit; font: inherit; font-size: 0.86rem; text-align: left; cursor: pointer;
+}
+.recent-item:hover { background: var(--accent-soft); }
+.recent-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-when { flex: none; font-family: var(--mono); font-size: 0.72rem; }
+.empty-recent { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; margin: 0.75rem 0; }
+.empty-recent button { font-family: var(--mono); font-size: 0.85rem; }
+
+@media (max-width: 55rem) {
+  .command-window-hint { display: none; }
+  .panes.cols-3, .panes.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .shortcut-row { grid-template-columns: 1fr; gap: 0; }
+}
+
+/* ===========================================================================
+   The classic window
+
+   Everything below gives the signed-in app SecureCRT's frame: menu bar,
+   toolbar, Session Manager, tabs, terminal, status bar, edge to edge, in
+   the operating system's own UI font. It comes last so it overrides the
+   earlier, more decorated chrome rules without rewriting them one by one.
+   =========================================================================== */
+
+body { font-size: 13.5px; }
+.app-window { height: 100vh; overflow: hidden; }
+.mainwin {
+  display: flex; flex-direction: column; height: 100vh;
+  background: var(--bg); color: var(--text);
+}
+
+/* Monospace is for terminal text, hostnames and code — never for chrome. */
+.brand-name, .tab-label, .pane-status, .pill, .tree-toggle, button.tool,
+.finder-kind, .recent-when, .snippet-bar-form-name, button.snip, .tab-rename,
+.modal legend, .open-tabs h3 {
+  font-family: var(--sans);
+  letter-spacing: 0;
+}
+
+/* Controls: flatter, squarer, Windows-sized. */
+button { padding: 0.28rem 0.8rem; border-radius: var(--radius); font-size: 13px; }
+button.primary { font-weight: 400; }
+button.primary:hover { box-shadow: none; filter: brightness(1.08); }
+input, select, textarea {
+  padding: 0.3rem 0.45rem; border-radius: 2px; background: var(--surface);
+  border-color: var(--border-strong); font-size: 13px;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  box-shadow: none; border-color: var(--accent); outline: 1px solid var(--accent);
+}
+.card { border-radius: var(--radius-lg); box-shadow: none; padding: 0.9rem; }
+label > span { font-size: 12.5px; color: var(--text); font-weight: 400; }
+
+/* --- menu bar ---------------------------------------------------------------- */
+
+.menubar {
+  flex: none; display: flex; align-items: center; height: 26px; padding: 0 4px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  font-size: 13px; user-select: none; position: relative; z-index: 120;
+}
+.menubar-mark { display: flex; color: var(--accent); padding: 0 6px 0 4px; }
+.menubar-item { position: relative; }
+.menubar-title {
+  border: none; background: none; border-radius: 2px;
+  padding: 2px 9px; font-size: 13px; color: var(--text); line-height: 1.4;
+}
+.menubar-title:hover, .menubar-title.open { background: var(--accent-soft); }
+.menu-dropdown {
+  position: absolute; top: 100%; left: 0; min-width: 16rem;
+  padding: 3px 0; background: var(--surface);
+  border: 1px solid var(--border-strong); box-shadow: var(--shadow);
+}
+.menu-entry {
+  display: grid; grid-template-columns: 24px 1fr auto; align-items: center;
+  width: 100%; text-align: left; border: none; border-radius: 0; background: none;
+  padding: 4px 18px 4px 2px; font-size: 13px; color: var(--text); white-space: nowrap;
+}
+.menu-entry:hover:not(:disabled) { background: var(--accent-soft); }
+.menu-entry:disabled { color: var(--muted); opacity: 0.6; }
+.menu-check { text-align: center; font-size: 12px; }
+.menu-shortcut { color: var(--muted); font-size: 12px; padding-left: 2rem; }
+.menu-separator { border-top: 1px solid var(--border); margin: 3px 0; }
+.menu-heading { padding: 4px 18px 1px 26px; font-size: 11.5px; color: var(--muted); }
+.menubar-end {
+  margin-left: auto; padding-right: 8px; display: flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden;
+}
+.menubar-user { display: inline-flex; align-items: center; gap: 6px; }
+
+/* --- toolbar ---------------------------------------------------------------- */
+
+.toolbar {
+  flex: none; display: flex; align-items: center; gap: 1px; flex-wrap: wrap;
+  padding: 3px 6px; background: var(--surface-2); border-bottom: 1px solid var(--border);
+}
+button.tb {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 6px; border: 1px solid transparent; border-radius: 3px;
+  background: none; color: var(--text); font-size: 12.5px; line-height: 1.2;
+}
+button.tb .icon { flex: none; }
+button.tb:hover:not(:disabled) { background: var(--accent-soft); border-color: rgba(0, 103, 192, 0.25); }
+button.tb.pressed { background: rgba(0, 103, 192, 0.14); border-color: rgba(0, 103, 192, 0.45); }
+button.tb:disabled { opacity: 0.38; cursor: default; }
+button.tb.small { padding: 2px 3px; }
+.tb-sep { width: 1px; height: 18px; margin: 0 5px; background: var(--border); }
+
+/* --- the body: Session Manager and terminals ------------------------------- */
+
+.mainwin .workspace {
+  flex: 1; min-height: 0; height: auto; gap: 0;
+  grid-template-columns: minmax(13rem, 17rem) 1fr;
+}
+.mainwin .workspace.collapsed { grid-template-columns: 1fr; }
+.mainwin .sidebar {
+  border: none; border-right: 1px solid var(--border); border-radius: 0;
+  background: var(--surface);
+}
+.sm-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 3px 2px 8px; background: var(--surface-2);
+  border-bottom: 1px solid var(--border); font-size: 12.5px; font-weight: 600;
+}
+.sm-tools { display: inline-flex; gap: 1px; }
+.sm-filter { padding: 4px; border-bottom: 1px solid var(--border); }
+.sm-filter input { padding: 3px 6px; font-size: 12.5px; }
+.mainwin .tree { font-size: 13px; }
+.mainwin .tree-row { border-radius: 0; }
+.mainwin .tree-row.selected { background: rgba(0, 103, 192, 0.16); }
+.mainwin .orphans, .mainwin .selection { padding: 0.5rem 0.6rem; }
+
+.mainwin .terminals { padding: 0; background: var(--bg); }
+
+/* Tabs that sit on the terminal like file-folder tabs, not floating pills. */
+.mainwin .tabstrip {
+  gap: 0; margin: 0; padding: 4px 4px 0; border-bottom: 1px solid var(--border-strong);
+  background: var(--bg);
+}
+.mainwin .tab {
+  margin-right: 2px; padding: 3px 4px 3px 8px; max-width: 14rem;
+  border: 1px solid var(--border); border-bottom: none; border-radius: 3px 3px 0 0;
+  background: var(--bg-deep);
+}
+.mainwin .tab.active {
+  background: var(--surface); border-color: var(--border-strong);
+  margin-bottom: -1px; padding-bottom: 4px;
+}
+.mainwin .tab-label { font-size: 12.5px; }
+.mainwin .tab.tab-c0, .mainwin .tab.active.tab-c0 { box-shadow: inset 0 3px 0 var(--ok); }
+.mainwin .tab.tab-c1, .mainwin .tab.active.tab-c1 { box-shadow: inset 0 3px 0 #2f81f7; }
+.mainwin .tab.tab-c2, .mainwin .tab.active.tab-c2 { box-shadow: inset 0 3px 0 var(--warn-border); }
+.mainwin .tab.tab-c3, .mainwin .tab.active.tab-c3 { box-shadow: inset 0 3px 0 #8250df; }
+.mainwin .tab.tab-c4, .mainwin .tab.active.tab-c4 { box-shadow: inset 0 3px 0 #1b7c83; }
+.mainwin .tab.tab-c5, .mainwin .tab.active.tab-c5 { box-shadow: inset 0 3px 0 var(--danger); }
+
+.mainwin .panes { padding: 0; gap: 4px; }
+.mainwin .panes.layout-split, .mainwin .panes.layout-grid { padding: 4px; }
+.mainwin .pane { border-radius: 0; border: none; }
+.mainwin .layout-split .pane, .mainwin .layout-grid .pane { border: 1px solid var(--border-strong); }
+.mainwin .pane-slot.focused .pane { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.mainwin .pane-screen { padding: 2px 4px; }
+.mainwin .pane-status {
+  font-size: 12px; padding: 2px 6px; background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.mainwin .pane-status[hidden] { display: none; }
+.mainwin .pill { font-size: 11.5px; padding: 0 6px; }
+.mainwin .pane-notices { font-size: 12.5px; }
+.mainwin .error { margin: 4px; }
+
+/* The welcome panel: three plain buttons and the recent list. */
+.welcome {
+  margin: auto; max-width: 34rem; padding: 2rem; text-align: center;
+}
+.welcome h2 { font-size: 1.15rem; font-weight: 600; margin-bottom: 0.4rem; }
+.welcome h3 { margin: 1.6rem 0 0.4rem; font-size: 0.95rem; font-weight: 600; }
+.welcome-actions { justify-content: center; margin-top: 0.9rem; }
+.welcome-actions button { display: inline-flex; align-items: center; gap: 6px; padding: 0.4rem 0.9rem; }
+.welcome-recent { list-style: none; padding: 0; margin: 0; text-align: left; display: inline-block; }
+.welcome-recent li { display: flex; gap: 0.75rem; align-items: baseline; padding: 2px 0; }
+.welcome-recent .mono { font-size: 12px; }
+
+.mainwin .command-window { margin: 4px; border-radius: 0; }
+.mainwin .snippet-bar { border-radius: 0; margin: 0; }
+
+/* --- status bar --------------------------------------------------------------- */
+
+.statusbar {
+  flex: none; display: flex; align-items: center; height: 23px;
+  background: var(--surface-2); border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--text); overflow: hidden;
+}
+.sb-cell { padding: 0 10px; border-left: 1px solid var(--border); white-space: nowrap; }
+.sb-cell.grow { flex: 1; border-left: none; overflow: hidden; text-overflow: ellipsis; }
+.sb-cell.mono { font-size: 12px; word-break: normal; }
+.sb-ended { color: var(--danger); }
+.sb-reconnecting, .sb-prompting { color: var(--warn-border); }
+.sb-warn { color: #9d5d00; }
+.sb-rec { color: var(--danger); font-weight: 600; }
+
+/* --- windows opened from the menus ------------------------------------------- */
+
+.window-overlay {
+  position: fixed; inset: 0; z-index: 160;
+  display: grid; place-items: center; padding: 1.5rem 1rem;
+  background: rgba(0, 0, 0, 0.28);
+}
+.window {
+  width: min(56rem, 100%); max-height: 90vh;
+  display: flex; flex-direction: column;
+  background: var(--bg); border: 1px solid var(--border-strong);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.28);
+}
+.window.wide { width: min(96rem, 98vw); height: 90vh; }
+.window-title {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  height: 32px; padding-left: 12px; background: var(--surface);
+  border-bottom: 1px solid var(--border); font-size: 13px; user-select: none;
+}
+.window-close {
+  height: 32px; width: 46px; padding: 0; border: none; border-radius: 0;
+  background: none; font-size: 13px; color: var(--text);
+}
+.window-close:hover { background: #c42b1c; color: #fff; }
+.window-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px; }
+.window-body .editor, .window-body .portability { max-width: none; }
+.window-body > .card:first-child { margin-top: 0; }
+.window-body .files { height: 100%; }
+
+/* The smaller modals (settings, finder, shortcuts) follow the same frame. */
+.modal-overlay { background: rgba(0, 0, 0, 0.28); backdrop-filter: none; padding-top: 6vh; }
+.modal { border-radius: var(--radius-lg); }
+.finder-item.current { box-shadow: none; background: rgba(0, 103, 192, 0.14); }
+
+/* Sign-in and vault screens: the same light window, minus the ceremony. */
+.centred .brand-name { font-size: 1.25rem; }
+
+/* ===========================================================================
+   Finishing touches, from the design, accessibility and code reviews
+   =========================================================================== */
+
+/* Text-only warning colour: the warn border is too pale to read as text.
+   And the browser's own controls — checkboxes, drop-down lists, scrollbars —
+   follow the window's theme, not the operating system's: with Windows in
+   dark mode, the light window was drawing black checkboxes. */
+:root { --warn-text: #8a6500; color-scheme: light; }
+:root[data-theme="dark"] { --warn-text: #e3b341; color-scheme: dark; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --warn-text: #e3b341; color-scheme: dark; }
+}
+
+/* Hidden means hidden: these elements set display, which beats the attribute. */
+.mainwin .sidebar[hidden] { display: none; }
+
+/* Screen-reader-only text. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* Focus you can see on every control, borderless ones included. */
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; box-shadow: none; }
+button.tb:focus-visible, .tab-label:focus-visible, .tab-close:focus-visible { outline-offset: 1px; }
+
+/* One face colour for all the chrome, as a native window has; white is for
+   content — the tree, the terminal, lists and fields. */
+.menubar, .toolbar, .statusbar, .sm-head, .window-title { background: var(--bg); }
+.window-title { border-bottom-color: var(--border-strong); }
+
+/* --- toolbar ------------------------------------------------------------------ */
+
+.icon { stroke-width: 1.6; }
+button.tb .icon { color: var(--text); }
+button.tb[data-icon="connect"] .icon { color: #0067c0; }
+button.tb[data-icon="quick"] .icon { color: #c27c0e; }
+button.tb[data-icon="reconnect"] .icon { color: #107c10; }
+button.tb[data-icon="disconnect"] .icon { color: #c42b1c; }
+button.tb[data-icon="files"] .icon { color: #b07d18; }
+button.tb[data-icon="broadcast"] .icon { color: #8250df; }
+:root[data-theme="dark"] button.tb .icon { filter: brightness(1.35); }
+button.tb:disabled { opacity: 1; }
+button.tb:disabled .icon, button.tb:disabled span { opacity: 0.45; filter: grayscale(1); }
+button.tb.pressed { box-shadow: inset 0 -2px 0 var(--accent); }
+button.tb.small { padding: 3px 4px; }
+.tb-group { display: inline-flex; gap: 1px; }
+
+/* --- tabs ---------------------------------------------------------------------- */
+
+.mainwin .tabstrip { padding: 2px 2px 0; }
+.mainwin .tab { min-width: 7rem; height: 24px; }
+.mainwin .tab-label { flex: 1; text-align: left; }
+.mainwin .tab-close {
+  min-width: 20px; min-height: 20px; border-radius: 2px;
+  display: inline-grid; place-items: center;
+}
+.mainwin .tab-close:hover { background: rgba(196, 43, 28, 0.12); }
+.mainwin .tab:not(.active):not(:hover) .tab-close { visibility: hidden; }
+.dot-live, .pill-live::before { box-shadow: none; }
+.mainwin .tab .open-tab-dot { width: 7px; height: 7px; }
+
+/* --- squarer tags and pills ----------------------------------------------------- */
+
+.tag, .pill, .warn-tag { border-radius: 2px; }
+
+/* --- the compact pane header floats over the screen ------------------------------
+
+   It appears only when there is something to say, and as an overlay it never
+   takes rows from the terminal — so it never resizes the remote session. */
+
+.mainwin .pane.compact .pane-status {
+  position: absolute; top: 4px; right: 18px; z-index: 6;
+  border: 1px solid var(--border-strong); border-radius: 2px;
+  background: var(--surface); box-shadow: var(--shadow);
+}
+
+/* --- menus ---------------------------------------------------------------------- */
+
+.menu-entry {
+  min-height: 22px; padding: 4px 24px 4px 2px;
+  grid-template-columns: 28px 1fr auto;
+}
+.menu-separator { margin: 3px 4px 3px 28px; }
+.menu-heading { padding-left: 30px; }
+.menu-entry:focus-visible { outline-offset: -2px; background: var(--accent-soft); }
+.menubar-menus { display: flex; align-items: center; }
+
+/* --- status bar ----------------------------------------------------------------- */
+
+.sb-cell { border-left-color: var(--border-strong); }
+.sb-reconnecting, .sb-prompting { color: var(--warn-text); }
+.sb-warn { color: var(--warn-text); }
+
+/* --- windows and dialogs -------------------------------------------------------- */
+
+/* SecureCRT's dialogs do not black out the program behind them. */
+.window-overlay { background: rgba(0, 0, 0, 0.08); }
+.window { box-shadow: 0 6px 28px rgba(0, 0, 0, 0.3); }
+.window-title h2 { margin: 0; font-size: 13px; font-weight: 400; }
+.window.narrow, .window.settings { width: min(40rem, 100%); }
+.window.finder { width: min(38rem, 100%); }
+.window.finder .window-body { padding: 8px; }
+.window.shortcuts { width: min(36rem, 100%); }
+
+/* The title bar already names the page; the page's own heading repeats it. */
+.window-body > section > h2:first-child,
+.window-body > section > .spread:first-child > h2 { display: none; }
+.window-body > section > .spread:first-child { justify-content: flex-end; }
+.window-body .card { border-color: var(--border-strong); border-radius: 0; background: var(--surface); }
+
+/* Group boxes, not web legends. */
+.window legend, .modal legend {
+  text-transform: none; letter-spacing: 0; font-size: 12.5px;
+  font-weight: 400; color: var(--text);
+}
+.window fieldset { border-color: var(--border-strong); border-radius: 0; }
+
+/* OK / Cancel along the bottom right, as every Windows dialog has them. */
+.dialog-footer {
+  display: flex; justify-content: flex-end; gap: 6px;
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+}
+
+/* Windows-sized push buttons in dialogs and on the sign-in screens. */
+.window-body button:not(.link):not(.tb):not(.window-close):not(.context-menu-item):not(.opt-category),
+.centred button:not(.link) {
+  min-width: 75px; min-height: 24px;
+}
+
+/* Sign-in: the same light window, a little lower on the screen. */
+.centred { margin-top: 16vh; max-width: 23rem; }

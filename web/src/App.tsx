@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-
-type Theme = 'dark' | 'light' | 'system'
 import { ApiError, api, type AuthConfig, type Whoami } from './api'
 import { Brand } from './Brand'
+import { WindowDialog } from './Chrome'
 import { SignIn } from './views/SignIn'
 import { MFAChallenge } from './views/MFAChallenge'
 import { VaultGate } from './views/VaultGate'
 import { Credentials } from './views/Credentials'
 import { Sessions } from './views/Sessions'
 import { Security } from './views/Security'
-import { Workspace } from './views/Workspace'
+import { Workspace, type Page } from './views/Workspace'
 import { KnownHosts } from './views/KnownHosts'
 import { Files } from './views/Files'
 import { Transfer } from './views/Transfer'
@@ -18,9 +17,26 @@ import { Snippets } from './views/Snippets'
 import { Transcripts } from './views/Transcripts'
 import { Admin } from './views/Admin'
 
-type Tab =
-  | 'terminal' | 'files' | 'tunnels' | 'snippets' | 'credentials'
-  | 'hosts' | 'recordings' | 'transfer' | 'sessions' | 'security' | 'admin'
+export type Theme = 'dark' | 'light' | 'system'
+
+/**
+ * A new key, so that everybody starts on the light window: the old one was
+ * written on every load and so holds "dark" for anyone who never chose.
+ */
+const THEME_KEY = 'bkd.theme.v2'
+
+const PAGE_TITLES: Record<Page, string> = {
+  files: 'File transfer (SFTP)',
+  tunnels: 'Port forwarding and tunnels',
+  snippets: 'Snippets and button bar',
+  credentials: 'Credentials: keys and passwords',
+  hosts: 'Known hosts',
+  recordings: 'Transcripts',
+  transfer: 'Import and export',
+  sessions: 'Sign-ins',
+  security: 'Security and two-factor',
+  admin: 'Administration',
+}
 
 /**
  * App decides what to show from a single whoami response.
@@ -29,31 +45,33 @@ type Tab =
  * enrolment, vault unlock — rather than leaving the client to infer it from a
  * sequence of error codes. That keeps the two from disagreeing about the
  * state of a session, which is the usual source of a login loop.
+ *
+ * Once signed in there is one window, the terminal workspace, the way
+ * SecureCRT has one. Everything else — credentials, the file browser, import
+ * — opens from its menus as a window on top, and closing it puts you back
+ * exactly where you were.
  */
 export function App() {
   const [config, setConfig] = useState<AuthConfig | null>(null)
   const [me, setMe] = useState<Whoami | null>(null)
   const [loading, setLoading] = useState(true)
   const [fatal, setFatal] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('terminal')
+  const [page, setPage] = useState<Page | null>(null)
 
-  // The app defaults to dark: its centrepiece is a black terminal, and eight
-  // hours of one inside a bright white frame is an eyestrain complaint. The
-  // toggle cycles dark, light, and following the OS; the choice sticks.
   const [theme, setTheme] = useState<Theme>(() => {
-    const stored = window.localStorage.getItem('bkd.theme')
-    return stored === 'light' || stored === 'system' ? stored : 'dark'
+    try {
+      const stored = window.localStorage.getItem(THEME_KEY)
+      return stored === 'dark' || stored === 'system' ? stored : 'light'
+    } catch {
+      return 'light'
+    }
   })
   useEffect(() => {
     const root = document.documentElement
     if (theme === 'system') root.removeAttribute('data-theme')
     else root.setAttribute('data-theme', theme)
-    window.localStorage.setItem('bkd.theme', theme)
+    try { window.localStorage.setItem(THEME_KEY, theme) } catch { /* convenience only */ }
   }, [theme])
-  const cycleTheme = () =>
-    setTheme((t) => (t === 'dark' ? 'light' : t === 'light' ? 'system' : 'dark'))
-  const themeGlyph = theme === 'dark' ? '\u263e' : theme === 'light' ? '\u2600' : 'auto'
-
 
   const refresh = useCallback(async () => {
     try {
@@ -82,6 +100,8 @@ export function App() {
       }
     })()
   }, [refresh])
+
+  const closePage = useCallback(() => setPage(null), [])
 
   if (loading) return <main className="centred"><p className="muted">Loading…</p></main>
 
@@ -123,79 +143,38 @@ export function App() {
   }
 
   return (
-    <>
+    <main className="app-window">
       {/*
-        One bar carries everything: brand, navigation, who is signed in, and
-        the two session actions. It lives outside <main> so it spans the
-        window whatever width the page below it keeps. On the screen someone
-        lives in all day, the rows this saves are terminal rows.
+        The workspace stays mounted for the whole signed-in life of the page.
+        Unmounting it would dispose every xterm instance and lose the visible
+        scrollback; the server would still hold the sessions, but "open the
+        credentials window and close it again" must not wipe the screen.
       */}
-      <header className="bar">
-        <Brand />
-        <nav className="tabs">
-        <button aria-current={tab === 'terminal' ? 'page' : undefined}
-                onClick={() => setTab('terminal')}>Terminal</button>
-        <button aria-current={tab === 'files' ? 'page' : undefined}
-                onClick={() => setTab('files')}>Files</button>
-        <button aria-current={tab === 'tunnels' ? 'page' : undefined}
-                onClick={() => setTab('tunnels')}>Tunnels</button>
-        <button aria-current={tab === 'snippets' ? 'page' : undefined}
-                onClick={() => setTab('snippets')}>Snippets</button>
-        <button aria-current={tab === 'credentials' ? 'page' : undefined}
-                onClick={() => setTab('credentials')}>Credentials</button>
-        <button aria-current={tab === 'hosts' ? 'page' : undefined}
-                onClick={() => setTab('hosts')}>Known hosts</button>
-        <button aria-current={tab === 'recordings' ? 'page' : undefined}
-                onClick={() => setTab('recordings')}>Transcripts</button>
-        <button aria-current={tab === 'transfer' ? 'page' : undefined}
-                onClick={() => setTab('transfer')}>Import / export</button>
-        <button aria-current={tab === 'sessions' ? 'page' : undefined}
-                onClick={() => setTab('sessions')}>Sign-ins</button>
-        <button aria-current={tab === 'security' ? 'page' : undefined}
-                onClick={() => setTab('security')}>Security</button>
-        {me.user.is_admin && (
-          <button aria-current={tab === 'admin' ? 'page' : undefined}
-                  onClick={() => setTab('admin')}>Admin</button>
-        )}
-        </nav>
-        <div className="who">
-          <span className="name">{me.user.display_name || me.user.email}</span>
-          {me.user.is_admin && <span className="tag">admin</span>}
-          {me.user.sso && <span className="tag">sso</span>}
-        </div>
-        <div className="row">
-          <button className="theme-toggle" onClick={cycleTheme}
-                  title={'Theme: ' + theme + ' \u2014 click to change'}>
-            {themeGlyph}
-          </button>
-          <button onClick={() => void api.post('/api/vault/lock').then(refresh)}>
-            Lock vault
-          </button>
-          <button onClick={() => void signOut()}>Sign out</button>
-        </div>
-      </header>
+      <Workspace
+        active={page === null}
+        me={me}
+        theme={theme}
+        onTheme={setTheme}
+        onOpenPage={setPage}
+        onLockVault={() => void api.post('/api/vault/lock').then(refresh)}
+        onSignOut={() => void signOut()}
+      />
 
-      <main className={'shell' + (tab === 'terminal' || tab === 'files' ? ' shell-wide' : '')}>
-      {/*
-        The workspace stays mounted once it has been opened. Unmounting it to
-        visit another tab would dispose every xterm instance and lose the
-        visible scrollback — the server would still hold the sessions, but
-        "switch tab and back" must not wipe the screen.
-      */}
-      <div hidden={tab !== 'terminal'} className="tabpanel">
-        <Workspace active={tab === 'terminal'} />
-      </div>
-      {tab === 'files' && <Files />}
-      {tab === 'tunnels' && <Tunnels />}
-      {tab === 'snippets' && <Snippets />}
-      {tab === 'credentials' && <Credentials />}
-      {tab === 'hosts' && <KnownHosts />}
-      {tab === 'recordings' && <Transcripts />}
-      {tab === 'admin' && me.user.is_admin && <Admin />}
-      {tab === 'transfer' && <Transfer />}
-      {tab === 'sessions' && <Sessions />}
-      {tab === 'security' && <Security me={me} onChanged={refresh} />}
-      </main>
-    </>
+      {page && (
+        <WindowDialog title={PAGE_TITLES[page]} wide={page === 'files' || page === 'admin'}
+                      onClose={closePage}>
+          {page === 'files' && <Files />}
+          {page === 'tunnels' && <Tunnels />}
+          {page === 'snippets' && <Snippets />}
+          {page === 'credentials' && <Credentials />}
+          {page === 'hosts' && <KnownHosts />}
+          {page === 'recordings' && <Transcripts />}
+          {page === 'admin' && me.user.is_admin && <Admin />}
+          {page === 'transfer' && <Transfer />}
+          {page === 'sessions' && <Sessions />}
+          {page === 'security' && <Security me={me} onChanged={refresh} />}
+        </WindowDialog>
+      )}
+    </main>
   )
 }

@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
+import { closeWindow, openMenu, openPage, signIn as signInWith, signedIn } from './ui'
 
 // These run against a real bkd binary with a real database, driving the
 // browser the way a person would. They exist to catch what unit tests
@@ -38,43 +39,26 @@ test.beforeEach(async ({ page }) => {
  * tests running in order, which meant one failure cascaded into the next and
  * made the real cause hard to find.
  */
-async function signIn(page: import('@playwright/test').Page) {
-  await page.goto(BASE)
-  await page.getByLabel('Email address', { exact: true }).fill(EMAIL)
-  await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
-  await page.getByRole('button', { name: 'Sign in' }).click()
-
-  const enrol = page.getByRole('heading', { name: 'Set up your vault' })
-  const unlock = page.getByRole('heading', { name: 'Unlock your vault' })
-  await expect(enrol.or(unlock)).toBeVisible()
-
-  if (await enrol.isVisible()) {
-    await page.getByLabel('Choose a passphrase', { exact: true }).fill(PASSPHRASE)
-    await page.getByLabel('Repeat it', { exact: true }).fill(PASSPHRASE)
-    await page.getByRole('button', { name: 'Create vault' }).click()
-  } else {
-    await page.getByLabel('Passphrase', { exact: true }).fill(PASSPHRASE)
-    await page.getByRole('button', { name: 'Unlock' }).click()
-  }
-
-  // Signing in lands on the terminal workspace, which is where the work is.
-  await expect(page.getByRole('button', { name: 'Terminal' })).toHaveAttribute(
-    'aria-current', 'page')
+async function signIn(page: Page) {
+  await signInWith(page, { email: EMAIL, password: PASSWORD, passphrase: PASSPHRASE })
 }
 
-/** openCredentials switches to the credential tab. */
-async function openCredentials(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Credentials' }).click()
-  await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible()
+/** openCredentials opens the Credentials window from the Tools menu. */
+async function openCredentials(page: Page) {
+  const win = await openPage(page, 'credentials')
+  // Exact: the window's own title also begins with "Credentials".
+  await expect(win.getByRole('heading', { name: 'Credentials', exact: true })).toBeVisible()
+  return win
 }
 
-/** generateKey creates a key through the interface and returns its name. */
-async function generateKey(page: import('@playwright/test').Page, name: string) {
-  await openCredentials(page)
-  await page.getByRole('button', { name: 'Generate SSH key' }).click()
-  await page.getByLabel('Name', { exact: true }).fill(name)
-  await page.getByRole('button', { name: 'Generate', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Key created' })).toBeVisible()
+/** generateKey creates a key through the interface and returns its window. */
+async function generateKey(page: Page, name: string) {
+  const win = await openCredentials(page)
+  await win.getByRole('button', { name: 'Generate SSH key' }).click()
+  await win.getByLabel('Name', { exact: true }).fill(name)
+  await win.getByRole('button', { name: 'Generate', exact: true }).click()
+  await expect(win.getByRole('heading', { name: 'Key created' })).toBeVisible()
+  return win
 }
 
 test('signs in, sets up a vault, and generates a key', async ({ page }) => {
@@ -94,18 +78,18 @@ test('signs in, sets up a vault, and generates a key', async ({ page }) => {
   await page.getByRole('button', { name: 'Create vault' }).click()
 
   // The terminal workspace is the landing screen.
-  await expect(page.getByRole('heading', { name: 'No terminal open' })).toBeVisible()
+  await signedIn(page)
+  await expect(page.getByRole('heading', { name: 'No session open' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Credentials' }).click()
-  await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible()
-  await expect(page.getByText('No credentials yet.')).toBeVisible()
+  const win = await openCredentials(page)
+  await expect(win.getByText('No credentials yet.')).toBeVisible()
 
   // Generate a key.
-  await page.getByRole('button', { name: 'Generate SSH key' }).click()
-  await page.getByLabel('Name', { exact: true }).fill('Production jump host')
-  await page.getByRole('button', { name: 'Generate', exact: true }).click()
+  await win.getByRole('button', { name: 'Generate SSH key' }).click()
+  await win.getByLabel('Name', { exact: true }).fill('Production jump host')
+  await win.getByRole('button', { name: 'Generate', exact: true }).click()
 
-  await expect(page.getByRole('heading', { name: 'Key created' })).toBeVisible()
+  await expect(win.getByRole('heading', { name: 'Key created' })).toBeVisible()
 
   // The public key and fingerprint are what the user needs...
   const body = await page.locator('body').innerText()
@@ -116,17 +100,20 @@ test('signs in, sets up a vault, and generates a key', async ({ page }) => {
   expect(body).not.toContain('BEGIN OPENSSH PRIVATE KEY')
   expect(body).not.toContain('PRIVATE KEY')
 
-  await page.getByRole('button', { name: 'Done' }).click()
-  await expect(page.getByText('Production jump host', { exact: true })).toBeVisible()
+  await win.getByRole('button', { name: 'Done' }).click()
+  await expect(win.getByText('Production jump host', { exact: true })).toBeVisible()
 })
 
 test('a credential survives locking and reopening the vault', async ({ page }) => {
   await signIn(page)
-  await generateKey(page, 'Lock test key')
-  await page.getByRole('button', { name: 'Done' }).click()
-  await expect(page.getByText('Lock test key', { exact: true })).toBeVisible()
+  const win = await generateKey(page, 'Lock test key')
+  await win.getByRole('button', { name: 'Done' }).click()
+  await expect(win.getByText('Lock test key', { exact: true })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Lock vault' }).click()
+  // The main window, and with it the menu bar, is inert while a window is
+  // open over it: close this one before reaching for File > Lock vault.
+  await closeWindow(win)
+  await openMenu(page, 'File', 'Lock vault')
   await expect(page.getByRole('heading', { name: 'Unlock your vault' })).toBeVisible()
 
   // A wrong passphrase is refused with a message, not a crash.
@@ -136,11 +123,12 @@ test('a credential survives locking and reopening the vault', async ({ page }) =
 
   await page.getByLabel('Passphrase', { exact: true }).fill(PASSPHRASE)
   await page.getByRole('button', { name: 'Unlock' }).click()
-  await openCredentials(page)
+  await signedIn(page)
+  const reopened = await openCredentials(page)
 
   // Still there, which proves it decrypted under a key derived freshly from
   // the passphrase rather than one left in memory.
-  await expect(page.getByText('Lock test key', { exact: true })).toBeVisible()
+  await expect(reopened.getByText('Lock test key', { exact: true })).toBeVisible()
 })
 
 test('the session cookie is HttpOnly and SameSite=Strict', async ({ page, context }) => {
@@ -163,7 +151,7 @@ test('the session cookie is HttpOnly and SameSite=Strict', async ({ page, contex
 test('signing out ends the session', async ({ page }) => {
   await signIn(page)
 
-  await page.getByRole('button', { name: 'Sign out' }).click()
+  await openMenu(page, 'File', 'Sign out')
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible()
 
   // And a reload must not resurrect it.
@@ -174,11 +162,11 @@ test('signing out ends the session', async ({ page }) => {
 test('sets up two-factor authentication', async ({ page }) => {
   await signIn(page)
 
-  await page.getByRole('button', { name: 'Security' }).click()
-  await expect(page.getByRole('heading', { name: 'Two-factor authentication' })).toBeVisible()
+  const win = await openPage(page, 'security')
+  await expect(win.getByRole('heading', { name: 'Two-factor authentication' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Set up' }).click()
-  await expect(page.getByRole('heading', { name: 'Set up your authenticator' })).toBeVisible()
+  await win.getByRole('button', { name: 'Set up' }).click()
+  await expect(win.getByRole('heading', { name: 'Set up your authenticator' })).toBeVisible()
 
   // The QR code renders from a data URI, which the content security policy
   // has to permit — if img-src lacked data:, this would be blocked.

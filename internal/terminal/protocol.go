@@ -131,6 +131,11 @@ type Control struct {
 	// ExitStatus is the remote command's exit code, when it reported one.
 	ExitStatus *int `json:"exit_status,omitempty"`
 
+	// Final, on a closed message, says the session was ended on purpose — a
+	// logout, a closed tab, an administrator, a shutdown — so a client must
+	// not redial it automatically. Absent means the connection failed.
+	Final bool `json:"final,omitempty"`
+
 	// Trigger carries a rule that fired, for ControlTrigger.
 	Trigger *TriggerEvent `json:"trigger,omitempty"`
 

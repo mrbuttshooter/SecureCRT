@@ -86,6 +86,14 @@ func (b *Bridge) WithBroadcast(broadcaster Broadcaster) *Bridge {
 func (b *Bridge) Run(ctx context.Context) error {
 	att, err := b.term.Attach()
 	if err != nil {
+		// A browser reattaching to a session that ended while it was away
+		// gets the same closing message it would have had live — with its
+		// exit status and whether it was ended on purpose — rather than a
+		// generic failure it might decide to retry.
+		if b.term.Closed() {
+			b.reportClosed(context.WithoutCancel(ctx))
+			return nil
+		}
 		b.sendControl(ctx, errorMessage(ErrCodeInternal, "That terminal is no longer available."))
 		return err
 	}
@@ -127,6 +135,14 @@ func (b *Bridge) Run(ctx context.Context) error {
 	select {
 	case err := <-errs:
 		cancel()
+		// When the shell ends, its output channel closes too, and the
+		// writer can notice that before this select sees Done. The browser
+		// must still be told the session is over — and how — or it treats
+		// a logout as a dropped connection and tries to reattach.
+		if b.term.Closed() {
+			b.reportClosed(context.WithoutCancel(ctx))
+			return nil
+		}
 		return err
 	case <-b.term.Done():
 		cancel()
@@ -361,6 +377,7 @@ func (b *Bridge) reportClosed(ctx context.Context) {
 	if code := b.term.ExitCode(); code != nil {
 		msg.ExitStatus = code
 	}
+	msg.Final = b.term.EndedDeliberately()
 	if err := b.term.Err(); err != nil {
 		msg.Message = err.Error()
 	} else {

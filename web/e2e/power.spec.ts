@@ -1,4 +1,9 @@
 import { test, expect, type Page } from '@playwright/test'
+import {
+  chooseCredential, closeWindow, connectTo, editorCategory, ensurePasswordCredential,
+  hasConnection, openNewConnection, openPage, paneMenu, run, saveNewConnection,
+  screenText, signIn as signInWith, treeRow, typeLine, type Pane,
+} from './ui'
 
 // The things a network team does with a terminal that a terminal alone does
 // not do: colour what matters, send a command they have typed a hundred
@@ -10,8 +15,6 @@ import { test, expect, type Page } from '@playwright/test'
 // broadcast is a group set from a browser and the proof of it is two screens
 // showing the same thing. All four end in the browser, so they are tested in
 // one.
-
-const BASE = process.env.BKD_E2E_URL ?? 'http://127.0.0.1:18500'
 
 const EMAIL = 'power@example.com'
 const PASSWORD = 'a very long admin password'
@@ -30,7 +33,6 @@ interface DrawnSpan {
 
 declare global {
   interface Window {
-    bkdTerminalText?: (key: string) => string | null
     bkdTerminalHighlights?: (key: string) => DrawnSpan[] | null
   }
 }
@@ -51,47 +53,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 async function signIn(page: Page) {
-  await page.goto(BASE)
-
-  const workspace = page.getByRole('button', { name: 'Terminal' })
-  const signInButton = page.getByRole('button', { name: 'Sign in' })
-  const enrol = page.getByRole('heading', { name: 'Set up your vault' })
-  const unlock = page.getByRole('heading', { name: 'Unlock your vault' })
-
-  await expect(workspace.or(signInButton).or(enrol).or(unlock)).toBeVisible()
-
-  if (await signInButton.isVisible()) {
-    await page.getByLabel('Email address', { exact: true }).fill(EMAIL)
-    await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
-    await signInButton.click()
-    await expect(workspace.or(enrol).or(unlock)).toBeVisible()
-  }
-
-  if (await enrol.isVisible()) {
-    await page.getByLabel('Choose a passphrase', { exact: true }).fill(PASSPHRASE)
-    await page.getByLabel('Repeat it', { exact: true }).fill(PASSPHRASE)
-    await page.getByRole('button', { name: 'Create vault' }).click()
-  } else if (await unlock.isVisible()) {
-    await page.getByLabel('Passphrase', { exact: true }).fill(PASSPHRASE)
-    await page.getByRole('button', { name: 'Unlock' }).click()
-  }
-
-  await expect(workspace).toHaveAttribute('aria-current', 'page')
-}
-
-async function ensureCredential(page: Page, name: string) {
-  await page.getByRole('button', { name: 'Credentials' }).click()
-  await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible()
-
-  if (await page.getByText(name, { exact: true }).count()) return
-
-  await page.getByRole('button', { name: 'Add password' }).click()
-  await page.getByLabel('Name', { exact: true }).fill(name)
-  await page.getByLabel('Username (optional)', { exact: true }).fill(SSH_USER)
-  await page.getByLabel('Secret', { exact: true }).fill(SSH_PASSWORD)
-  await page.getByRole('button', { name: 'Save', exact: true }).click()
-
-  await expect(page.getByText(name, { exact: true }).first()).toBeVisible()
+  await signInWith(page, { email: EMAIL, password: PASSWORD, passphrase: PASSPHRASE })
 }
 
 /** Options a connection may be created with, beyond where it points. */
@@ -111,32 +73,26 @@ interface ConnectionExtras {
 async function ensureConnection(
   page: Page, name: string, credentialName: string, extras: ConnectionExtras = {},
 ) {
-  await ensureCredential(page, credentialName)
+  await ensurePasswordCredential(page, credentialName, SSH_USER, SSH_PASSWORD)
 
-  await page.getByRole('button', { name: 'Terminal' }).click()
-  if (await page.locator('.sidebar').getByRole('button', { name, exact: true }).count()) return
+  if (await hasConnection(page, name)) return
 
-  await page.getByRole('button', { name: 'New connection', exact: true }).click()
-  const form = page.locator('form.editor')
-  await expect(form.getByRole('heading', { name: 'New connection' })).toBeVisible()
+  const form = await openNewConnection(page)
 
   await form.getByLabel('Name', { exact: true }).fill(name)
   await form.getByLabel('Hostname or address', { exact: true }).fill(SSH_HOST)
   await form.getByLabel('Port', { exact: true }).fill(SSH_PORT)
   await form.getByLabel('Username on the remote host', { exact: true }).fill(SSH_USER)
-
-  const credentialField = form.getByRole('combobox', { name: 'Credential' })
-  const value = await credentialField.evaluate(
-    (el, wanted) =>
-      Array.from((el as HTMLSelectElement).options)
-        .find((option) => option.text.startsWith(wanted))?.value ?? '',
-    credentialName,
-  )
-  expect(value, `no option for the credential "${credentialName}"`).toBeTruthy()
-  await credentialField.selectOption(value)
+  await chooseCredential(form, credentialName)
 
   if (extras.highlight) {
-    await form.locator('details.triggers summary').click()
+    // The editor opens the rules itself on this category; a click on their
+    // heading would fold them away again, so only open them if they are not.
+    await editorCategory(form, 'Watch rules')
+    const rules = form.locator('details.triggers')
+    if (!(await rules.evaluate((el) => (el as HTMLDetailsElement).open))) {
+      await rules.locator('summary').click()
+    }
     await form.getByRole('button', { name: 'Add a rule' }).click()
 
     // Scoped to the rule's own box: the connection form has a "Name" field
@@ -149,12 +105,12 @@ async function ensureConnection(
   }
 
   if (extras.record) {
-    await form.getByText('Recording', { exact: true }).click()
+    await editorCategory(form, 'Log file')
     await form.getByLabel('Write a transcript of this session to the server').check()
   }
 
-  await form.getByRole('button', { name: 'Create connection' }).click()
-  await expect(page.getByRole('heading', { name: 'New connection' })).toBeHidden()
+  await saveNewConnection(form)
+  await expect(treeRow(page, name)).toBeVisible()
 }
 
 /**
@@ -164,34 +120,15 @@ async function ensureConnection(
  * in the suite: these tests open two panes at once, and a `.last()` locator
  * is lazy — the handle for the first pane would quietly start resolving to
  * the second the moment it appeared, and a broadcast test would then compare
- * a screen with itself and pass regardless.
+ * a screen with itself and pass regardless. connectTo binds by key.
+ *
+ * Opened from the Session Manager's row rather than from a tab: once a tab is
+ * open its label is a button with the same name, and these tests open the
+ * same connection twice on purpose.
  */
-async function connect(page: Page, name: string) {
-  const before = await page.getByTestId('terminal-pane').count()
-
-  // Scoped to the tree: once a tab is open, its label is a button with the
-  // same name, and these tests open the same connection twice on purpose.
-  await page.locator('.sidebar').getByRole('button', { name, exact: true }).click()
-  await page.locator('.selection').getByRole('button', { name: 'Connect' }).click()
-
-  await expect(page.getByTestId('terminal-pane')).toHaveCount(before + 1)
-  const key = await paneKey(page.getByTestId('terminal-pane').last())
-  const pane = page.locator(`[data-pane-key="${key}"]`)
-
-  // A race rather than a poll: the first connection to a host asks about its
-  // key, later ones do not, and checking for a dialog that has not been
-  // drawn yet is how this becomes intermittent.
-  const prompt = pane.getByRole('button', { name: /fingerprint matches/ })
-  const connected = pane.getByText('Connected', { exact: true })
-  await expect(prompt.or(connected).first()).toBeVisible({ timeout: 20_000 })
-
-  if (await prompt.isVisible()) await prompt.click()
-
-  await expect(connected).toBeVisible({ timeout: 20_000 })
-  return pane
+async function connect(page: Page, name: string): Promise<Pane> {
+  return connectTo(page, name)
 }
-
-type Pane = ReturnType<Page['getByTestId']>
 
 async function paneKey(pane: Pane): Promise<string> {
   const key = await pane.getAttribute('data-pane-key')
@@ -199,31 +136,11 @@ async function paneKey(pane: Pane): Promise<string> {
   return key!
 }
 
-async function screenText(page: Page, pane: Pane): Promise<string> {
-  const key = await paneKey(pane)
-  const text = await page.evaluate((k) => window.bkdTerminalText?.(k) ?? null, key)
-  expect(text, 'the terminal is not registered').not.toBeNull()
-  return text!
-}
-
 async function highlights(page: Page, pane: Pane): Promise<DrawnSpan[]> {
   const key = await paneKey(pane)
   const spans = await page.evaluate((k) => window.bkdTerminalHighlights?.(k) ?? null, key)
   expect(spans, 'the highlighter is not registered').not.toBeNull()
   return spans!
-}
-
-async function type(page: Page, pane: Pane, command: string) {
-  await pane.locator('.xterm-helper-textarea').first().focus()
-  await page.keyboard.type(command)
-  await page.keyboard.press('Enter')
-}
-
-async function run(page: Page, pane: Pane, command: string, marker: RegExp) {
-  await type(page, pane, command)
-  await expect(async () => {
-    expect(await screenText(page, pane)).toMatch(marker)
-  }).toPass({ timeout: 20_000 })
 }
 
 test('a highlight rule colours what the device printed', async ({ page }) => {
@@ -251,21 +168,22 @@ test('a highlight rule colours what the device printed', async ({ page }) => {
 test('a snippet is sent to the terminal, asking for what changes', async ({ page }) => {
   await signIn(page)
 
-  await page.getByRole('button', { name: 'Snippets' }).click()
-  await expect(page.getByRole('heading', { name: 'Snippets' })).toBeVisible()
+  const library = await openPage(page, 'snippets')
+  await expect(library.getByRole('heading', { name: 'Snippets', exact: true })).toBeVisible()
 
-  if (!(await page.getByText('describe a port', { exact: true }).count())) {
-    await page.getByRole('button', { name: 'New snippet' }).click()
-    await page.getByLabel('Name', { exact: true }).fill('describe a port')
-    await page.getByLabel('Command', { exact: true }).fill('echo port-{{port}}-marked')
-    await page.getByRole('button', { name: 'Create snippet' }).click()
-    await expect(page.getByRole('heading', { name: 'New snippet' })).toBeHidden()
+  if (!(await library.getByText('describe a port', { exact: true }).count())) {
+    await library.getByRole('button', { name: 'New snippet' }).click()
+    await library.getByLabel('Name', { exact: true }).fill('describe a port')
+    await library.getByLabel('Command', { exact: true }).fill('echo port-{{port}}-marked')
+    await library.getByRole('button', { name: 'Create snippet' }).click()
+    await expect(library.getByRole('heading', { name: 'New snippet' })).toBeHidden()
   }
+  await closeWindow(library)
 
   await ensureConnection(page, 'Snippet host', 'Power password')
   const pane = await connect(page, 'Snippet host')
 
-  await pane.getByRole('button', { name: 'Snippets' }).click()
+  await paneMenu(pane, 'Send a snippet…')
   const menu = pane.getByRole('dialog', { name: 'Send a snippet' })
   await menu.getByRole('button', { name: 'describe a port' }).click()
 
@@ -292,7 +210,7 @@ test('one keyboard reaches two terminals', async ({ page }) => {
   const first = await connect(page, 'Broadcast one')
   const second = await connect(page, 'Broadcast two')
 
-  await second.getByRole('button', { name: 'Broadcast' }).click()
+  await paneMenu(second, 'Broadcast to other terminals…')
   const menu = second.getByRole('dialog', { name: 'Broadcast to other terminals' })
   await expect(menu.getByTestId('broadcast-candidates')).toBeVisible()
   // Clicked and then asserted rather than .check()ed, because the tick
@@ -314,7 +232,7 @@ test('one keyboard reaches two terminals', async ({ page }) => {
   // type into a rack has to be able to see that they are.
   await expect(second.getByTestId('broadcast-badge')).toContainText('typing into 2')
 
-  await type(page, second, 'echo reached-both-of-them')
+  await typeLine(page, second, 'echo reached-both-of-them')
 
   await expect(async () => {
     expect(await screenText(page, second)).toMatch(/reached-both-of-them/)
@@ -322,12 +240,12 @@ test('one keyboard reaches two terminals', async ({ page }) => {
   }).toPass({ timeout: 20_000 })
 
   // And leaving the group stops it, which matters more than joining it.
-  await second.getByRole('button', { name: 'Broadcast' }).click()
+  await paneMenu(second, 'Broadcast to other terminals…')
   await menu.getByRole('button', { name: 'Clear' }).click()
   await menu.getByRole('button', { name: 'Close' }).click()
   await expect(second.getByTestId('broadcast-badge')).toBeHidden()
 
-  await type(page, second, 'echo only-the-one-i-typed-at')
+  await typeLine(page, second, 'echo only-the-one-i-typed-at')
 
   await expect(async () => {
     expect(await screenText(page, second)).toMatch(/only-the-one-i-typed-at/)
@@ -342,7 +260,7 @@ test('a recorded session says so on the terminal', async ({ page }) => {
   const pane = await connect(page, 'Recorded host')
 
   // Said on the terminal itself, not only in a settings page nobody opens.
-  await expect(pane.getByText('recording', { exact: true })).toBeVisible({ timeout: 20_000 })
+  await expect(pane.getByText('REC', { exact: true })).toBeVisible({ timeout: 20_000 })
   await expect(pane.getByTestId('pane-notices'))
     .toContainText('being recorded to a transcript')
 })

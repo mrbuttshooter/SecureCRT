@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Folder, SavedSession, Tree } from '../api'
-import { ContextMenu, type MenuItem } from '../ContextMenu'
+import { ContextMenu, MENU_BREAK, type MenuItem } from '../ContextMenu'
+import './tree.css'
 
 export interface SessionTreeProps {
   tree: Tree
@@ -94,62 +95,71 @@ export function SessionTree(props: SessionTreeProps) {
     setDropTarget(null)
   }
 
-  const renderSession = (s: SavedSession, depth: number) => (
-    <li
-      key={s.id}
-      className={
-        'tree-row tree-session' +
-        (props.selectedId === s.id ? ' selected' : '') +
-        (props.checkedIds.has(s.id) ? ' checked' : '') +
-        (props.liveSessionIds.has(s.id) ? ' live' : '')
-      }
-      style={{ paddingLeft: `${depth * 14 + 22}px` }}
-      draggable
-      onDragStart={() => setDragging({ kind: 'session', id: s.id })}
-      onDragEnd={() => { setDragging(null); setDropTarget(null) }}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        props.onSelect(s)
-        setMenu({ x: e.clientX, y: e.clientY, items: [
-          { label: 'Connect', onClick: () => props.onOpen(s) },
-          { label: 'Edit…', onClick: () => props.onEditSession(s) },
-          { label: '—', disabled: true, onClick: () => {} },
-          { label: 'Delete…', danger: true, onClick: () => props.onDeleteSession(s) },
-        ] })
-      }}
-    >
-      <button
-        className="tree-label"
-        // The row shows a status glyph and the hostname alongside the name,
-        // which would otherwise all end up in the accessible name and make
-        // every row read as a sentence. The name is what identifies it.
-        aria-label={s.name}
-        onClick={(e) => {
-          // Ctrl+click gathers; a plain click selects, the way the file
-          // browser next door already behaves.
-          if (e.ctrlKey || e.metaKey) props.onToggleCheck(s)
-          else props.onSelect(s)
+  const renderSession = (s: SavedSession, depth: number) => {
+    const live = props.liveSessionIds.has(s.id)
+    return (
+      <li
+        key={s.id}
+        className={
+          'tree-row tree-session' +
+          (props.selectedId === s.id ? ' selected' : '') +
+          (props.checkedIds.has(s.id) ? ' checked' : '') +
+          (live ? ' live' : '')
+        }
+        // No twisty on a connection: the extra indent lines its icon up one
+        // level in from its folder's icon, the way Explorer does it.
+        style={{ paddingLeft: `${depth * INDENT + 2 + TWISTY}px` }}
+        draggable
+        onDragStart={() => setDragging({ kind: 'session', id: s.id })}
+        onDragEnd={() => { setDragging(null); setDropTarget(null) }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          props.onSelect(s)
+          setMenu({ ...menuAt(e), items: [
+            { label: 'Connect', onClick: () => props.onOpen(s) },
+            { label: 'Edit…', onClick: () => props.onEditSession(s) },
+            MENU_BREAK,
+            { label: 'Delete…', danger: true, onClick: () => props.onDeleteSession(s) },
+          ] })
         }}
-        onDoubleClick={() => props.onOpen(s)}
-        title={`${s.username ? s.username + '@' : ''}${s.hostname}:${s.effective_port}`}
       >
-        <span className="tree-icon" aria-hidden="true">
-          {props.liveSessionIds.has(s.id) ? '●' : '○'}
-        </span>
-        <span className="tree-name">{s.name}</span>
-        {!s.name.includes(s.hostname) && (
-          <span className="tree-host muted">{s.hostname}</span>
-        )}
-      </button>
-      <button
-        className="link tree-action"
-        aria-label={`Connect to ${s.name}`}
-        onClick={() => props.onOpen(s)}
-      >
-        Connect
-      </button>
-    </li>
-  )
+        <button
+          className="tree-label"
+          // The row shows a status icon and the hostname alongside the name,
+          // which would otherwise all end up in the accessible name and make
+          // every row read as a sentence. The name is what identifies it.
+          aria-label={live ? `${s.name} (connected)` : s.name}
+          onClick={(e) => {
+            // Ctrl+click gathers; a plain click selects, the way the file
+            // browser next door already behaves.
+            if (e.ctrlKey || e.metaKey) props.onToggleCheck(s)
+            else props.onSelect(s)
+          }}
+          onDoubleClick={() => props.onOpen(s)}
+          onKeyDown={(e) => {
+            // Enter connects, as in SecureCRT's Session Manager; Space still
+            // selects. With the row's Connect link gone this is the keyboard
+            // path to it, besides the context-menu key.
+            if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+              e.preventDefault()
+              props.onSelect(s)
+              props.onOpen(s)
+            }
+          }}
+          title={`${s.username ? s.username + '@' : ''}${s.hostname}:${s.effective_port}`}
+        >
+          <span className="tree-icon" aria-hidden="true">
+            <SessionIcon />
+            {live && <span className="tree-live-dot" />}
+          </span>
+          <span className="tree-name">{s.name}</span>
+          {!s.name.includes(s.hostname) && (
+            <span className="tree-host muted">{s.hostname}</span>
+          )}
+        </button>
+      </li>
+    )
+  }
 
   const renderNode = (node: Node, depth: number): React.ReactNode => {
     const matching = filterNode(node, needle)
@@ -165,7 +175,7 @@ export function SessionTree(props: SessionTreeProps) {
             'tree-row tree-folder' +
             (dropTarget === node.folder.id && canDrop ? ' drop-target' : '')
           }
-          style={{ paddingLeft: `${depth * 14 + 4}px` }}
+          style={{ paddingLeft: `${depth * INDENT + 2}px` }}
           draggable
           onDragStart={() => setDragging({ kind: 'folder', id: node.folder.id })}
           onDragEnd={() => { setDragging(null); setDropTarget(null) }}
@@ -176,18 +186,23 @@ export function SessionTree(props: SessionTreeProps) {
           }}
           onDragLeave={() => setDropTarget((t) => (t === node.folder.id ? null : t))}
           onDrop={(e) => { e.preventDefault(); dropInto(node.folder.id) }}
+          onDoubleClick={(e) => {
+            // Double-clicking a folder opens or closes it, as in Explorer.
+            // The twisty already toggles on each of its own clicks.
+            if (!(e.target as HTMLElement).closest('.tree-twisty')) toggle(node.folder.id)
+          }}
           onContextMenu={(e) => {
             e.preventDefault()
             const inside = sessionsUnder(node)
-            setMenu({ x: e.clientX, y: e.clientY, items: [
-              { label: 'New connection here', onClick: () => props.onNewSessionIn(node.folder.id) },
-              { label: 'New folder here', onClick: () => props.onNewFolderIn(node.folder.id) },
+            setMenu({ ...menuAt(e), items: [
+              { label: 'New connection here…', onClick: () => props.onNewSessionIn(node.folder.id) },
+              { label: 'New folder here…', onClick: () => props.onNewFolderIn(node.folder.id) },
               { label: 'Folder defaults…', onClick: () => props.onEditFolder(node.folder) },
               ...(node.folder.team_id
                 ? [{ label: 'My credential for this rack…',
                      onClick: () => props.onFolderCredential(node.folder) }]
                 : []),
-              { label: '—', disabled: true, onClick: () => {} },
+              MENU_BREAK,
               {
                 label: `Connect all ${inside.length}`,
                 disabled: inside.length === 0,
@@ -199,7 +214,7 @@ export function SessionTree(props: SessionTreeProps) {
                   )) inside.forEach((s) => props.onOpen(s))
                 },
               },
-              { label: '—', disabled: true, onClick: () => {} },
+              MENU_BREAK,
               { label: 'Delete…', danger: true, onClick: () => props.onDeleteFolder(node.folder) },
             ] })
           }}
@@ -210,8 +225,11 @@ export function SessionTree(props: SessionTreeProps) {
             aria-label={isCollapsed ? `Expand ${node.folder.name}` : `Collapse ${node.folder.name}`}
             onClick={() => toggle(node.folder.id)}
           >
-            {isCollapsed ? '▸' : '▾'}
+            <Chevron />
           </button>
+          <span className="tree-icon tree-folder-icon" aria-hidden="true">
+            <FolderIcon open={!isCollapsed} />
+          </span>
           <span className="tree-name">{node.folder.name}</span>
           {node.folder.team_id && (
             <span className="tag shared-tag"
@@ -219,14 +237,6 @@ export function SessionTree(props: SessionTreeProps) {
               {props.teamName(node.folder.team_id)}
             </span>
           )}
-          <span className="tree-tools">
-            <button className="link" title="New connection here"
-                    onClick={() => props.onNewSessionIn(node.folder.id)}>+ Connection</button>
-            <button className="link" title="New folder here"
-                    onClick={() => props.onNewFolderIn(node.folder.id)}>+ Folder</button>
-            <button className="link" onClick={() => props.onEditFolder(node.folder)}>Defaults</button>
-            <button className="link danger" onClick={() => props.onDeleteFolder(node.folder)}>Delete</button>
-          </span>
         </div>
 
         {!isCollapsed && (
@@ -266,6 +276,72 @@ export function SessionTree(props: SessionTreeProps) {
                      onClose={() => setMenu(null)} />
       )}
     </div>
+  )
+}
+
+/** Pixels of indent per tree level, and the twisty's footprint (box + gap). */
+const INDENT = 16
+const TWISTY = 16
+
+/**
+ * Where a context menu opens. A menu raised from the keyboard (the menu key
+ * or Shift+F10) carries no pointer position, so it opens under the row
+ * instead of in the window's top-left corner.
+ */
+function menuAt(e: React.MouseEvent<HTMLElement>): { x: number; y: number } {
+  if (e.clientX === 0 && e.clientY === 0) {
+    const r = e.currentTarget.getBoundingClientRect()
+    return { x: r.left + 24, y: r.bottom }
+  }
+  return { x: e.clientX, y: e.clientY }
+}
+
+/** The twisty: a small chevron that the stylesheet rotates when open. */
+function Chevron() {
+  return (
+    <svg className="tree-chevron" width="10" height="10" viewBox="0 0 10 10"
+         aria-hidden="true" focusable="false">
+      <path d="M3.5 1.5 7 5l-3.5 3.5" fill="none" stroke="currentColor"
+            strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/** A manila folder, the way Windows has drawn one for thirty years. */
+function FolderIcon({ open }: { open: boolean }) {
+  const edge = '#b08a2e'
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      {open ? (
+        <>
+          <path d="M1.5 13.5v-10h4.2l1.5 1.5h6.3v2.5" fill="#dcb240" stroke={edge}
+                strokeLinejoin="round" />
+          <path d="M1.5 13.5l2.2-6h11l-2.2 6z" fill="#f0d27a" stroke={edge}
+                strokeLinejoin="round" />
+        </>
+      ) : (
+        <>
+          <path d="M1.5 13.5v-10h4.2l1.5 1.5h7.3v8.5z" fill="#dcb240" stroke={edge}
+                strokeLinejoin="round" />
+          <path d="M1.5 6.5h13v7h-13z" fill="#e8c35a" stroke={edge}
+                strokeLinejoin="round" />
+        </>
+      )}
+    </svg>
+  )
+}
+
+/** A saved connection: a small terminal window with a prompt in it. */
+function SessionIcon() {
+  return (
+    <svg className="tree-screen" width="16" height="16" viewBox="0 0 16 16"
+         aria-hidden="true" focusable="false">
+      <rect className="tree-screen-glass" x="1.5" y="2.5" width="13" height="11" rx="1"
+            stroke="currentColor" />
+      <path d="M1.5 5h13" fill="none" stroke="currentColor" />
+      <path d="M4 7.5l2 1.5-2 1.5M7.5 11h3" fill="none" stroke="currentColor"
+            strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   )
 }
 

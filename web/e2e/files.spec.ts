@@ -2,6 +2,10 @@ import { test, expect, type Page, type Locator } from '@playwright/test'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import {
+  chooseCredential, ensurePasswordCredential, hasConnection,
+  openNewConnection, openPage, saveNewConnection, signIn as signInWith, treeRow,
+} from './ui'
 
 // The file browser, driven through a real browser against two real SFTP
 // servers.
@@ -15,7 +19,6 @@ import { join } from 'node:path'
 // Every assertion about a file ends at readFileSync in this process, because
 // the test SSH servers serve the actual filesystem.
 
-const BASE = process.env.BKD_E2E_URL ?? 'http://127.0.0.1:18500'
 // Its own account: the suites share an instance, and sharing an account
 // would mean sharing a vault, a credential list and a known-hosts list with
 // whichever spec file happened to run first.
@@ -57,77 +60,25 @@ test.beforeEach(async ({ page }) => {
 // --- helpers ----------------------------------------------------------------
 
 async function signIn(page: Page) {
-  await page.goto(BASE)
-
-  const workspaceTab = page.getByRole('button', { name: 'Terminal' })
-  const signInButton = page.getByRole('button', { name: 'Sign in' })
-  const enrol = page.getByRole('heading', { name: 'Set up your vault' })
-  const unlock = page.getByRole('heading', { name: 'Unlock your vault' })
-
-  await expect(workspaceTab.or(signInButton).or(enrol).or(unlock)).toBeVisible()
-
-  if (await signInButton.isVisible()) {
-    await page.getByLabel('Email address', { exact: true }).fill(EMAIL)
-    await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
-    await signInButton.click()
-    await expect(workspaceTab.or(enrol).or(unlock)).toBeVisible()
-  }
-
-  if (await enrol.isVisible()) {
-    await page.getByLabel('Choose a passphrase', { exact: true }).fill(PASSPHRASE)
-    await page.getByLabel('Repeat it', { exact: true }).fill(PASSPHRASE)
-    await page.getByRole('button', { name: 'Create vault' }).click()
-  } else if (await unlock.isVisible()) {
-    await page.getByLabel('Passphrase', { exact: true }).fill(PASSPHRASE)
-    await page.getByRole('button', { name: 'Unlock' }).click()
-  }
-
-  await expect(workspaceTab).toHaveAttribute('aria-current', 'page')
-}
-
-/** ensureCredential stores the test hosts' password once. */
-async function ensureCredential(page: Page, name: string) {
-  await page.getByRole('button', { name: 'Credentials' }).click()
-  await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible()
-
-  if (await page.getByText(name, { exact: true }).count()) return
-
-  await page.getByRole('button', { name: 'Add password' }).click()
-  await page.getByLabel('Name', { exact: true }).fill(name)
-  await page.getByLabel('Username (optional)', { exact: true }).fill(SSH_USER)
-  await page.getByLabel('Secret', { exact: true }).fill(SSH_PASSWORD)
-  await page.getByRole('button', { name: 'Save', exact: true }).click()
-
-  await expect(page.getByText(name, { exact: true }).first()).toBeVisible()
+  await signInWith(page, { email: EMAIL, password: PASSWORD, passphrase: PASSPHRASE })
 }
 
 /** ensureConnection saves a connection pointing at one of the test hosts. */
 async function ensureConnection(page: Page, name: string, port: string, credentialName: string) {
-  await ensureCredential(page, credentialName)
+  await ensurePasswordCredential(page, credentialName, SSH_USER, SSH_PASSWORD)
 
-  await page.getByRole('button', { name: 'Terminal' }).click()
-  if (await page.getByRole('button', { name, exact: true }).count()) return
+  if (await hasConnection(page, name)) return
 
-  await page.getByRole('button', { name: 'New connection', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'New connection' })).toBeVisible()
+  const editor = await openNewConnection(page)
 
-  await page.getByLabel('Name', { exact: true }).fill(name)
-  await page.getByLabel('Hostname or address', { exact: true }).fill(SSH_HOST)
-  await page.getByLabel('Port', { exact: true }).fill(port)
-  await page.getByLabel('Username on the remote host', { exact: true }).fill(SSH_USER)
+  await editor.getByLabel('Name', { exact: true }).fill(name)
+  await editor.getByLabel('Hostname or address', { exact: true }).fill(SSH_HOST)
+  await editor.getByLabel('Port', { exact: true }).fill(port)
+  await editor.getByLabel('Username on the remote host', { exact: true }).fill(SSH_USER)
+  await chooseCredential(editor, credentialName)
 
-  const credentialField = page.getByRole('combobox', { name: 'Credential' })
-  const value = await credentialField.evaluate(
-    (el, wanted) =>
-      Array.from((el as HTMLSelectElement).options)
-        .find((option) => option.text.startsWith(wanted))?.value ?? '',
-    credentialName,
-  )
-  expect(value, `no option for the credential "${credentialName}"`).toBeTruthy()
-  await credentialField.selectOption(value)
-
-  await page.getByRole('button', { name: 'Create connection' }).click()
-  await expect(page.getByRole('heading', { name: 'New connection' })).toBeHidden()
+  await saveNewConnection(editor)
+  await expect(treeRow(page, name)).toBeVisible()
 }
 
 /**
@@ -202,7 +153,7 @@ test('browses a directory and shows sizes, modes and owners', async ({ page }) =
   await signIn(page)
   await ensureConnection(page, 'Host A', SSH_PORT, 'Test host password')
 
-  await page.getByRole('button', { name: 'Files' }).click()
+  await openPage(page, 'files')
   const pane = await openPane(page, 'left', 'Host A', dir)
 
   // Directories first, which is what the server sorted and what a file
@@ -221,7 +172,7 @@ test('uploads a file dropped from the desktop', async ({ page }) => {
   await signIn(page)
   await ensureConnection(page, 'Host A', SSH_PORT, 'Test host password')
 
-  await page.getByRole('button', { name: 'Files' }).click()
+  await openPage(page, 'files')
   const pane = await openPane(page, 'left', 'Host A', dir)
 
   // The file picker is the same code path the drop handler uses, and is what
@@ -255,7 +206,7 @@ test('downloads a file byte for byte', async ({ page }) => {
   await signIn(page)
   await ensureConnection(page, 'Host A', SSH_PORT, 'Test host password')
 
-  await page.getByRole('button', { name: 'Files' }).click()
+  await openPage(page, 'files')
   const pane = await openPane(page, 'left', 'Host A', dir)
 
   const target = row(pane, 'payload.bin')
@@ -285,7 +236,7 @@ test('copies a directory from one host straight to the other', async ({ page }) 
   await ensureConnection(page, 'Host A', SSH_PORT, 'Test host password')
   await ensureConnection(page, 'Host B', SSH_PORT_2, 'Test host password')
 
-  await page.getByRole('button', { name: 'Files' }).click()
+  await openPage(page, 'files')
   const left = await openPane(page, 'left', 'Host A', source)
   await openPane(page, 'right', 'Host B', dest)
 
@@ -330,7 +281,7 @@ test('edits a file in place', async ({ page }) => {
   await signIn(page)
   await ensureConnection(page, 'Host A', SSH_PORT, 'Test host password')
 
-  await page.getByRole('button', { name: 'Files' }).click()
+  await openPage(page, 'files')
   const pane = await openPane(page, 'left', 'Host A', dir)
 
   await row(pane, 'motd.conf').getByRole('button', { name: 'motd.conf', exact: true }).dblclick()
@@ -359,7 +310,7 @@ test('creates, renames, chmods and deletes', async ({ page }) => {
   await signIn(page)
   await ensureConnection(page, 'Host A', SSH_PORT, 'Test host password')
 
-  await page.getByRole('button', { name: 'Files' }).click()
+  await openPage(page, 'files')
   const pane = await openPane(page, 'left', 'Host A', dir)
 
   await test.step('new folder', async () => {

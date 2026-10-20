@@ -36,16 +36,27 @@ export function ContextMenu({ x, y, items, onClose }: {
       if (!ref.current?.contains(event.target as Node)) onClose()
     }
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key !== 'Escape') return
+      // Stopped here: a menu opened by right-clicking a terminal leaves focus
+      // in xterm, and an Escape that carried on would reach vim on the host.
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+    }
+    // A terminal scrolling as output arrives is not the person scrolling
+    // away from the menu, so it must not close it.
+    const scrolled = (event: Event) => {
+      if ((event.target as Element | null)?.closest?.('.xterm')) return
+      onClose()
     }
     // Capture, so a click that opens something else still closes this first.
     document.addEventListener('mousedown', away, true)
     document.addEventListener('keydown', key, true)
-    document.addEventListener('scroll', onClose, true)
+    document.addEventListener('scroll', scrolled, true)
     return () => {
       document.removeEventListener('mousedown', away, true)
       document.removeEventListener('keydown', key, true)
-      document.removeEventListener('scroll', onClose, true)
+      document.removeEventListener('scroll', scrolled, true)
     }
   }, [onClose])
 

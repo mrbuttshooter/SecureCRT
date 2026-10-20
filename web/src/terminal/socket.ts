@@ -53,6 +53,8 @@ export interface Control {
   accepted?: boolean
   terminal_id?: string
   exit_status?: number
+  /** On closed: the session was ended on purpose, so it must not be redialled. */
+  final?: boolean
   highlights?: HighlightRule[]
   trigger?: TriggerEvent
   terminals?: string[]
@@ -74,7 +76,12 @@ export interface TerminalSocketHandlers {
   onHostKeyChanged: (info: HostKeyInfo, message: string) => void
   onError: (code: string, message: string) => void
   onTerminalID: (id: string) => void
-  onClosed: (exitStatus?: number) => void
+  /**
+   * onClosed reports the remote session finished. An exit status means the
+   * shell ended it — someone typed exit. No status means the connection went
+   * away underneath it, which is the case auto-reconnect exists for.
+   */
+  onClosed: (exitStatus?: number, message?: string, final?: boolean) => void
 
   /**
    * onHighlights carries the colouring rules, on every attach.
@@ -351,7 +358,7 @@ export class TerminalSocket {
       case 'closed':
         this.closedByUs = true
         this.handlers.onState('ended')
-        this.handlers.onClosed(msg.exit_status)
+        this.handlers.onClosed(msg.exit_status, msg.message, msg.final)
         break
 
       case 'pong':

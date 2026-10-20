@@ -1,0 +1,124 @@
+/* Session Manager tree, drawn the way SecureCRT (and Explorer) draw theirs:
+   20px rows, manila folders, a pale-blue selection with a hairline border.
+
+   This sheet is imported from SessionTree.tsx, which the bundle reaches
+   before styles.css, so every rule is scoped `.sidebar .tree …` to win on
+   specificity rather than on order. */
+
+.sidebar .tree {
+  --tree-hover: #e5f3ff;
+  --tree-sel: #cce8ff;
+  --tree-sel-edge: #99d1ff;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  padding: 2px 0;
+}
+
+:root[data-theme="dark"] .sidebar .tree {
+  --tree-hover: rgba(76, 168, 240, 0.14);
+  --tree-sel: rgba(0, 103, 192, 0.35);
+  --tree-sel-edge: rgba(76, 168, 240, 0.5);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sidebar .tree {
+    --tree-hover: rgba(76, 168, 240, 0.14);
+    --tree-sel: rgba(0, 103, 192, 0.35);
+    --tree-sel-edge: rgba(76, 168, 240, 0.5);
+  }
+}
+
+/* --- rows ------------------------------------------------------------------ */
+
+.sidebar .tree .tree-row {
+  display: flex; align-items: center; gap: 4px;
+  height: 20px; padding-top: 0; padding-bottom: 0; padding-right: 4px;
+  font-size: 13px; line-height: 18px;
+  border: 1px solid transparent; border-radius: 0;
+  box-shadow: none; cursor: default; user-select: none;
+}
+.sidebar .tree .tree-row:hover { background: var(--tree-hover); }
+
+.sidebar .tree .tree-row.selected,
+.sidebar .tree .tree-row.checked,
+.sidebar .tree .tree-row.selected:hover,
+.sidebar .tree .tree-row.checked:hover {
+  background: var(--tree-sel);
+  border-color: var(--tree-sel-edge);
+  border-radius: 0; box-shadow: none; outline: none;
+}
+
+.sidebar .tree .tree-row.drop-target {
+  background: var(--tree-hover);
+  border: 1px dashed var(--accent); border-radius: 0;
+}
+
+/* The label is a button for keyboard reach, but must read as a plain row. */
+.sidebar .tree .tree-label {
+  flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0;
+  height: 100%; padding: 0; margin: 0;
+  background: none; border: none; border-radius: 0; box-shadow: none;
+  color: inherit; font: inherit; text-align: left; cursor: default;
+  transition: none;
+}
+.sidebar .tree .tree-label:focus-visible {
+  outline: 1px dotted var(--text); outline-offset: -1px;
+  box-shadow: none; border: none;
+}
+
+.sidebar .tree .tree-name {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.sidebar .tree .tree-host {
+  flex: none; margin-left: auto; padding-left: 8px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%;
+}
+
+/* --- twisty ---------------------------------------------------------------- */
+
+.sidebar .tree .tree-twisty {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 12px; height: 16px; padding: 0; margin: 0;
+  background: none; border: none; border-radius: 0; box-shadow: none;
+  color: var(--muted); cursor: pointer; line-height: 0; transition: none;
+}
+.sidebar .tree .tree-twisty:hover { color: var(--text); border: none; }
+.sidebar .tree .tree-twisty:focus-visible {
+  outline: 1px dotted var(--text); outline-offset: 0;
+  box-shadow: none; border: none;
+}
+.sidebar .tree .tree-chevron { display: block; transition: transform 80ms ease; }
+.sidebar .tree .tree-twisty[aria-expanded="true"] .tree-chevron { transform: rotate(90deg); }
+
+/* --- icons ----------------------------------------------------------------- */
+
+.sidebar .tree .tree-icon {
+  position: relative; flex: none;
+  display: inline-flex; width: 16px; height: 16px;
+  color: var(--muted); font-size: 0; line-height: 0;
+}
+.sidebar .tree .tree-icon svg { display: block; }
+.sidebar .tree .tree-screen-glass { fill: var(--surface); }
+
+.sidebar .tree .tree-session.live .tree-icon { color: var(--muted); text-shadow: none; }
+
+/* Connected: a small green light on the screen's corner, no glow. */
+.sidebar .tree .tree-live-dot {
+  position: absolute; right: -1px; bottom: 0;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #107c10; box-shadow: 0 0 0 1px var(--surface);
+}
+
+/* --- shared/team label ----------------------------------------------------- */
+
+.sidebar .tree .shared-tag {
+  flex: none; margin-left: 4px; padding: 0 4px;
+  font-size: 11px; line-height: 14px;
+  border: 1px solid var(--border-strong); border-radius: 2px;
+  background: transparent; color: var(--muted);
+  max-width: 8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.sidebar .tree .tree-empty { padding: 6px 8px; font-size: 12px; }

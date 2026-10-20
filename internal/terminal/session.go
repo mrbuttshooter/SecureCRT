@@ -12,7 +12,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mrbuttshooter/securecrt/internal/proto/sshx"
+	"github.com/mrbuttshooter/securecrt/internal/sessions"
 )
+
+// deliberate is why a terminal was ended on purpose — a closed tab, an
+// administrator, the server shutting down, the abandoned-session reaper —
+// as opposed to a connection that failed. The browser is told the
+// difference, because only a failure should ever be redialled on its own.
+type deliberate string
+
+func (d deliberate) Error() string { return string(d) }
 
 // Errors returned by this package.
 var (
@@ -225,7 +234,7 @@ func (m *Manager) reapOnce(now time.Time) int {
 		m.log.Info("closing abandoned terminal",
 			"terminal", t.ID, "user", t.UserID, "host", t.Transport.Host,
 			"detached_for", now.Sub(t.detachedAt).Round(time.Second))
-		t.close(errors.New("terminal: abandoned"))
+		t.close(deliberate("terminal: abandoned"))
 	}
 	return len(abandoned)
 }
@@ -243,7 +252,7 @@ func (m *Manager) Close() {
 	m.mu.Unlock()
 
 	for _, t := range all {
-		t.close(errors.New("terminal: server shutting down"))
+		t.close(deliberate("terminal: server shutting down"))
 	}
 }
 
@@ -453,6 +462,14 @@ func (t *Terminal) pump() {
 				if code, ok := sshx.ExitStatus(waitErr); ok {
 					exit = &code
 				}
+			} else if t.Transport.Protocol == sessions.ProtocolSSH {
+				// SSH reports a clean exit as a nil Wait. Recording it as
+				// status 0 is what lets the browser tell "someone typed
+				// logout" from "the connection went away" — and only the
+				// second deserves an automatic redial. Telnet and serial have
+				// no exit status, so their nil means nothing either way.
+				zero := 0
+				exit = &zero
 			}
 
 			t.mu.Lock()
@@ -574,6 +591,16 @@ func (t *Terminal) ExitCode() *int {
 	return t.exitCode
 }
 
+// EndedDeliberately reports whether the session finished on purpose: the
+// remote shell exited with a status, or this server closed it for a reason
+// of its own. False means the connection failed underneath it.
+func (t *Terminal) EndedDeliberately() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var d deliberate
+	return t.exitCode != nil || errors.As(t.closeErr, &d)
+}
+
 // Err reports why the terminal ended.
 func (t *Terminal) Err() error {
 	t.mu.Lock()
@@ -641,7 +668,7 @@ func (m *Manager) CloseTerminal(userID, terminalID string) error {
 	delete(m.terminals, terminalID)
 	m.mu.Unlock()
 
-	t.close(errors.New("terminal: closed by the user"))
+	t.close(deliberate("terminal: closed by the user"))
 	return nil
 }
 
@@ -759,7 +786,7 @@ func (m *Manager) CloseAny(terminalID string) (ownerID string, err error) {
 	if !ok {
 		return "", ErrTerminalNotFound
 	}
-	t.close(errors.New("terminal: ended by an administrator"))
+	t.close(deliberate("terminal: ended by an administrator"))
 	return t.UserID, nil
 }
 

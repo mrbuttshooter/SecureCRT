@@ -729,6 +729,31 @@ func TestRemoteExitClosesTheTerminal(t *testing.T) {
 	if !term.Closed() {
 		t.Fatal("the terminal should read as closed")
 	}
+	// A clean logout must read as ended on purpose; otherwise a browser with
+	// auto-reconnect on would dial the switch straight back.
+	if !term.EndedDeliberately() {
+		t.Fatal("a shell that exited cleanly must read as ended deliberately")
+	}
+}
+
+func TestOnlyFailuresReadAsAccidental(t *testing.T) {
+	zero := 0
+	for _, tc := range []struct {
+		name string
+		term *Terminal
+		want bool
+	}{
+		{"closed by the user", &Terminal{closeErr: deliberate("terminal: closed by the user")}, true},
+		{"ended by an administrator", &Terminal{closeErr: deliberate("terminal: ended by an administrator")}, true},
+		{"server shutting down", &Terminal{closeErr: deliberate("terminal: server shutting down")}, true},
+		{"shell exited", &Terminal{exitCode: &zero}, true},
+		{"connection reset", &Terminal{closeErr: errors.New("read: connection reset by peer")}, false},
+		{"plain end of stream", &Terminal{}, false},
+	} {
+		if got := tc.term.EndedDeliberately(); got != tc.want {
+			t.Errorf("%s: EndedDeliberately() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
 }
 
 func TestFolderInheritanceReachesTheConnection(t *testing.T) {

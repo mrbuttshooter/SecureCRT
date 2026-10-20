@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, type Credential, type Folder, type Settings, type Trigger } from '../api'
 import { TriggerEditor } from './TriggerEditor'
+import { AppearanceFields } from './AppearanceFields'
+import './options.css'
 
 export interface FolderEditorProps {
   folder: Folder | null
@@ -30,6 +32,8 @@ export function FolderEditor(props: FolderEditorProps) {
   const [credentialId, setCredentialId] = useState(defaults.credential_id ?? '')
   const [triggers, setTriggers] = useState<Trigger[]>(defaults.triggers ?? [])
   const [logSession, setLogSession] = useState(defaults.log_session ?? false)
+  const [scheme, setScheme] = useState(defaults.colour_scheme ?? '')
+  const [fontSize, setFontSize] = useState(defaults.font_size != null ? String(defaults.font_size) : '')
   const [teamId, setTeamId] = useState('')
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -48,6 +52,11 @@ export function FolderEditor(props: FolderEditorProps) {
     setSaving(true)
 
     const settings: Settings = {
+      // Defaults this form has no field for — a logon sequence or keepalive
+      // that arrived with an import — are kept, not wiped by saving a rename.
+      ...defaults,
+      colour_scheme: scheme || null,
+      font_size: fontSize ? Number(fontSize) : null,
       username: username.trim() || null,
       port: port ? Number(port) : null,
       credential_id: credentialId || null,
@@ -79,8 +88,12 @@ export function FolderEditor(props: FolderEditorProps) {
   }
 
   return (
-    <form className="card editor" onSubmit={submit}>
-      <h2>{editing ? `Defaults for “${editing.name}”` : 'New folder'}</h2>
+    <form className="editor opt-dialog" onSubmit={submit}>
+      {/* The window's title bar already names the folder; this line says what
+          the form beneath it is for, which the old heading used to. */}
+      {editing && (
+        <p className="muted opt-intro">Defaults for “{editing.name}” and everything inside it.</p>
+      )}
 
       <label>
         Name
@@ -130,6 +143,12 @@ export function FolderEditor(props: FolderEditorProps) {
         </select>
       </label>
 
+      <fieldset className="opt-group">
+        <legend>Appearance</legend>
+        <AppearanceFields scheme={scheme} size={fontSize} onScheme={setScheme}
+                          onSize={setFontSize} scope="folder" />
+      </fieldset>
+
       <TriggerEditor triggers={triggers} onChange={setTriggers} scope="folder" />
 
       <label className="check">
@@ -138,11 +157,11 @@ export function FolderEditor(props: FolderEditorProps) {
         Record a transcript of every session in this folder
       </label>
 
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error opt-error" role="alert">{error}</div>}
 
-      <div className="row">
-        <button type="submit" disabled={saving}>
-          {saving ? 'Saving…' : editing ? 'Save defaults' : 'Create folder'}
+      <div className="opt-footer">
+        <button type="submit" className="primary" disabled={saving}>
+          {saving ? 'Saving…' : editing ? 'OK' : 'Create folder'}
         </button>
         <button type="button" onClick={props.onCancel}>Cancel</button>
       </div>
