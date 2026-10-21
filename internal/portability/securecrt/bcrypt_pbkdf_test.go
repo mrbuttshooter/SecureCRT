@@ -51,3 +51,31 @@ func TestV3RoundTrip(t *testing.T) {
 		t.Error("decryptV3 accepted a wrong configuration passphrase")
 	}
 }
+
+// TestBcryptPBKDFAcceptsEmptyPassword pins the KDF to its OpenSSH-reference
+// behaviour for the single most common SecureCRT configuration: no master
+// passphrase set. SecureCRT's default is no Configuration Passphrase, in
+// which case every "03:" value in a config — including the self-recoverable
+// Security.Passphrase in the settings export — is encrypted with "" as the
+// bcrypt_pbkdf input. A defensive early-return here once blocked that whole
+// case; this test exists so it does not come back.
+func TestBcryptPBKDFAcceptsEmptyPassword(t *testing.T) {
+	got, err := bcryptPBKDF([]byte(""), []byte("salt"), 32, 12)
+	if err != nil {
+		t.Fatalf("empty password should be a valid input, got: %v", err)
+	}
+	if len(got) != 32 {
+		t.Fatalf("expected 32 bytes of output, got %d", len(got))
+	}
+	// Determinism matters more than the exact value: anybody else's
+	// bcrypt_pbkdf on these inputs must produce the same bytes, or two
+	// SecureCRT configurations with no passphrase would need two different
+	// decoders.
+	again, err := bcryptPBKDF([]byte(""), []byte("salt"), 32, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, again) {
+		t.Error("bcryptPBKDF with empty password is non-deterministic")
+	}
+}

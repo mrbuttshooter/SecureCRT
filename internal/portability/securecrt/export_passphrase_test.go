@@ -108,14 +108,24 @@ func TestConfigPassphraseRecoveryFromExport(t *testing.T) {
 			t.Logf("  %-10s input: %v", c.label, err)
 			continue
 		}
-		if !probeLooksPrintable(plain) {
+		// A decrypt that returned nothing is still a decrypt: SecureCRT writes
+		// the Configuration Passphrase into the export so a restore can read
+		// it back, and when the user has no Configuration Passphrase set
+		// (the default) the plaintext IS the empty string. Every session
+		// password in the file is then encrypted under the same empty input.
+		if !probeLooksPrintable(plain) && plain != "" {
 			t.Logf("  %-10s input: decoded to %d non-printable bytes", c.label, len(plain))
 			continue
 		}
 		t.Logf("  %-10s input: %s", c.label, probeMask(plain))
 		if !found {
 			winner, found = plain, true
-			t.Logf("  → recovered the Config Passphrase using %q as input", c.label)
+			switch {
+			case plain == "":
+				t.Logf("  → the recovered Config Passphrase is empty: this installation has no master passphrase set")
+			default:
+				t.Logf("  → recovered the Config Passphrase using %q as input", c.label)
+			}
 		}
 	}
 	if !found {

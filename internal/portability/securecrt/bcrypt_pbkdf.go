@@ -28,9 +28,11 @@ func bcryptPBKDF(password, salt []byte, keyLen, rounds int) ([]byte, error) {
 	if rounds < 1 {
 		return nil, errors.New("bcrypt_pbkdf: too few rounds")
 	}
-	if len(password) == 0 {
-		return nil, errors.New("bcrypt_pbkdf: empty password")
-	}
+	// An empty password is a legitimate input — it is what SecureCRT uses
+	// when no Configuration Passphrase has been set, which is the default.
+	// OpenSSH's reference bcrypt_pbkdf accepts it too; rejecting it here
+	// would mean a config exported with no passphrase (the common case)
+	// could never be read, which is the opposite of what the format needs.
 	if len(salt) == 0 || len(salt) > 1<<20 {
 		return nil, errors.New("bcrypt_pbkdf: bad salt length")
 	}
