@@ -89,6 +89,7 @@ func ReadUpload(source Source, filename string, data []byte, opts UploadOptions)
 			return FromSecureCRTXML(data, SecureCRTOptions{
 				ConfigPassphrase: opts.ConfigPassphrase,
 				SkipPasswords:    opts.SkipPasswords,
+				KeyPassphrase:    opts.KeyPassphrase,
 			})
 		}
 		fsys, err := ArchiveFS(data, filename)
@@ -98,6 +99,7 @@ func ReadUpload(source Source, filename string, data []byte, opts UploadOptions)
 		return FromSecureCRT(fsys, SecureCRTOptions{
 			ConfigPassphrase: opts.ConfigPassphrase,
 			SkipPasswords:    opts.SkipPasswords,
+			KeyPassphrase:    opts.KeyPassphrase,
 		})
 
 	case SourceOpenSSH:

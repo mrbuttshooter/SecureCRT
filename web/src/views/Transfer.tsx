@@ -188,6 +188,14 @@ function ImportPanel({ config }: { config: PortabilityConfig }) {
                      onChange={(e) => setSkipPasswords(e.target.checked)} />
               Leave the saved passwords behind
             </label>
+            <p className="muted">
+              SSH keys: SecureCRT keeps them outside its Config folder (by
+              default <span className="mono">Identity</span> in Documents, or
+              in <span className="mono">~/.ssh</span>). Put those key files in
+              the same zip and each session gets its key. A key in
+              SecureCRT{'’'}s own format needs Tools {'→'} Convert
+              Private Key to OpenSSH Format first; the import says which.
+            </p>
           </>
         )}
 

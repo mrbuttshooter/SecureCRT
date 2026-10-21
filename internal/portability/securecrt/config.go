@@ -186,11 +186,24 @@ type Session struct {
 	// PasswordError explains why a stored password did not decode.
 	PasswordError string
 
-	// IdentityFile is the private key path SecureCRT was configured with.
-	// The key itself lives outside the configuration, so this is a
-	// breadcrumb for the user rather than something that can be imported on
-	// its own.
+	// IdentityFile is the private key path SecureCRT was configured with,
+	// as stored. The key itself lives outside the configuration; the
+	// importer looks for it in whatever was uploaded alongside.
 	IdentityFile string
+
+	// ProtocolName is SecureCRT's own name for the protocol ("SSH2",
+	// "Telnet", "RLogin"…). Protocol maps everything it cannot carry to ssh
+	// so the host is not lost; this says what the session really was.
+	ProtocolName string
+
+	// UsesGlobalKey means the session takes its key from the global SSH2
+	// settings ("Use Global Public Key") rather than naming its own.
+	UsesGlobalKey bool
+
+	// AuthOrder is "SSH2 Authentications V2" split into methods, in the
+	// order SecureCRT tries them — which decides whether a session that has
+	// both a key and a password is really a key session.
+	AuthOrder []string
 
 	// FirewallName is SecureCRT's jump-host setting. "Session:name" refers
 	// to another session; anything else is a firewall defined globally.
@@ -248,6 +261,13 @@ func ReadSession(file *File, relativePath string, opts ReadOptions) Session {
 	}
 
 	session.Port = portFrom(file, session.Protocol)
+	session.ProtocolName = file.String("Protocol Name", "SSH2")
+	session.UsesGlobalKey = file.Number("Use Global Public Key", 0) == 1
+	for _, method := range strings.Split(file.String("SSH2 Authentications V2", ""), ",") {
+		if method = strings.ToLower(strings.TrimSpace(method)); method != "" {
+			session.AuthOrder = append(session.AuthOrder, method)
+		}
+	}
 
 	if !opts.SkipPasswords {
 		readPassword(file, &session, opts.ConfigPassphrase)
@@ -345,6 +365,10 @@ func portFrom(file *File, protocol string) int {
 type Result struct {
 	Sessions []Session
 
+	// GlobalIdentityFile is the key named in the global SSH2 settings
+	// (Config/SSH2.ini), which sessions with "Use Global Public Key" use.
+	GlobalIdentityFile string
+
 	// Warnings are files that could not be read, and sessions that lost
 	// something in translation.
 	Warnings []string
@@ -440,6 +464,16 @@ func ReadDirectory(fsys fs.FS, opts ReadOptions) (Result, error) {
 	})
 	if err != nil {
 		return result, err
+	}
+
+	// The global key lives in SSH2.ini, beside the Sessions folder — which
+	// is the root of the upload either way it was zipped.
+	if file, err := fsys.Open("SSH2.ini"); err == nil {
+		if parsed, err := ParseFile(file); err == nil {
+			result.GlobalIdentityFile = parsed.String("Identity Filename V2",
+				parsed.String("Identity Filename", ""))
+		}
+		_ = file.Close()
 	}
 
 	return result, nil

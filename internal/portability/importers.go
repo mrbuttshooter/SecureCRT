@@ -56,6 +56,11 @@ type SecureCRTOptions struct {
 	// from a session's saved password, so an imported credential is
 	// recognisable in a list beside hand-made ones.
 	CredentialPrefix string
+
+	// KeyPassphrase opens key files that have a passphrase on them. Optional:
+	// a key without one imports as it is, and SecureCRT never saves key
+	// passphrases, so there is nothing in the configuration to recover.
+	KeyPassphrase string
 }
 
 // FromSecureCRT reads a SecureCRT configuration directory into a payload.
@@ -73,7 +78,7 @@ func FromSecureCRT(fsys fs.FS, opts SecureCRTOptions) (Import, error) {
 	if err != nil {
 		return Import{}, fmt.Errorf("portability: read the SecureCRT configuration: %w", err)
 	}
-	return fromSecureCRTResult(result, opts)
+	return fromSecureCRTResult(result, opts, fsys)
 }
 
 // FromSecureCRTXML reads a Tools > Export Settings file — the same sessions
@@ -86,10 +91,13 @@ func FromSecureCRTXML(data []byte, opts SecureCRTOptions) (Import, error) {
 	if err != nil {
 		return Import{}, fmt.Errorf("portability: read the SecureCRT settings export: %w", err)
 	}
-	return fromSecureCRTResult(result, opts)
+	// An XML carries key paths but no files, so there is nothing to search.
+	return fromSecureCRTResult(result, opts, nil)
 }
 
-func fromSecureCRTResult(result securecrt.Result, opts SecureCRTOptions) (Import, error) {
+// fsys is the upload the configuration came from, searched for the key files
+// sessions name; nil when there is no such upload (the settings XML).
+func fromSecureCRTResult(result securecrt.Result, opts SecureCRTOptions, fsys fs.FS) (Import, error) {
 
 	out := Import{
 		Source:   SourceSecureCRT,
@@ -114,6 +122,9 @@ func fromSecureCRTResult(result securecrt.Result, opts SecureCRTOptions) (Import
 	if prefix == "" {
 		prefix = "SecureCRT"
 	}
+
+	keys := newSecureCRTKeys(fsys, opts.KeyPassphrase, prefix)
+	globalWithoutFile := 0
 
 	folders := newFolderTree()
 	// Sessions in a stable order, so two runs over one configuration produce
@@ -169,14 +180,24 @@ func fromSecureCRTResult(result securecrt.Result, opts SecureCRTOptions) (Import
 			session.CredentialID = credential.ID
 		}
 
-		if source.IdentityFile != "" {
-			// The key itself lives outside the configuration, so it cannot
-			// travel with the session. Saying which file it was is the most
-			// useful thing available.
-			out.Warnings = append(out.Warnings, fmt.Sprintf(
-				"%q used the key at %s. Import that key separately and set it on "+
-					"the connection — SecureCRT stores the path, not the key.",
-				source.Name, source.IdentityFile))
+		// The session's key: its own, or the global one it defers to. One
+		// credential per connection, so the key is used unless the session
+		// has a password and SecureCRT was told to try that first — decided
+		// before the key is read, so no key arrives that nothing uses.
+		identity := source.IdentityFile
+		if source.UsesGlobalKey {
+			identity = result.GlobalIdentityFile
+		}
+		hasPassword := source.Password != "" || source.HasPassword
+		wantsKey := isSSHSession(source) && allowsPublicKey(source.AuthOrder) &&
+			(!hasPassword || prefersKey(source.AuthOrder))
+		switch {
+		case wantsKey && identity != "":
+			if keyID := keys.credentialFor(identity, source.Name); keyID != "" {
+				session.CredentialID = keyID
+			}
+		case wantsKey && source.UsesGlobalKey:
+			globalWithoutFile++
 		}
 
 		if jump := source.JumpSession(); jump != "" {
@@ -212,6 +233,15 @@ func fromSecureCRTResult(result securecrt.Result, opts SecureCRTOptions) (Import
 	}
 
 	out.Payload.Folders = folders.all()
+
+	out.Payload.Credentials = append(out.Payload.Credentials, keys.credentials...)
+	keys.report(&out, fsys == nil)
+	if globalWithoutFile > 0 {
+		out.Warnings = append(out.Warnings, fmt.Sprintf(
+			"%d session%s use%s SecureCRT’s global key, but SSH2.ini (which names it) was not "+
+				"in the upload. Zip the whole Config folder to bring it across.",
+			globalWithoutFile, plural(globalWithoutFile), singularS(globalWithoutFile)))
+	}
 
 	recovered, stored := result.PasswordsRecovered()
 	switch {
@@ -285,4 +315,44 @@ func settingsJSON(values map[string]any) json.RawMessage {
 		return nil
 	}
 	return encoded
+}
+
+// allowsPublicKey reports whether a session's authentication list lets it use
+// a key at all. An empty list is SecureCRT's default, which does.
+func allowsPublicKey(order []string) bool {
+	if len(order) == 0 {
+		return true
+	}
+	for _, method := range order {
+		if method == "publickey" {
+			return true
+		}
+	}
+	return false
+}
+
+// prefersKey reports whether SecureCRT would try the key before the password.
+func prefersKey(order []string) bool {
+	for _, method := range order {
+		switch method {
+		case "publickey":
+			return true
+		case "password", "keyboard-interactive":
+			return false
+		}
+	}
+	return len(order) == 0
+}
+
+// isSSHSession reports whether SecureCRT itself spoke SSH to this host.
+// Protocol says ssh for anything it could not carry (RLogin, raw), so the
+// original name decides; sessions built without one go by Protocol.
+func isSSHSession(s securecrt.Session) bool {
+	switch strings.ToUpper(strings.TrimSpace(s.ProtocolName)) {
+	case "SSH2", "SSH1":
+		return true
+	case "":
+		return s.Protocol == "ssh"
+	}
+	return false
 }

@@ -22,7 +22,7 @@ Two things are true throughout and worth reading before anything else:
 
 | From | Connections | Folders | Passwords | Keys | Host keys |
 |---|---|---|---|---|---|
-| SecureCRT | yes | yes | **yes** | yes | no |
+| SecureCRT | yes | yes | **yes** | if in the zip | no |
 | PuTTY | yes | one folder | none stored | **yes, converted** | no |
 | OpenSSH `~/.ssh` | yes | one folder | n/a | yes | yes |
 | CSV | yes | one folder | if a column has them | no | no |
@@ -84,6 +84,40 @@ because that is what they are.
 
 If you would rather not bring them at all, tick **Leave the saved passwords
 behind** and set credentials by hand afterwards.
+
+### Bringing your SSH keys
+
+SecureCRT stores a key by *path*, never by content, and keeps the files
+outside its Config folder — by default `Identity` and `Identity.pub` in
+Documents on Windows, `~/.ssh` on macOS and Linux. So a zipped Config folder
+on its own brings the device list and the passwords but no keys.
+
+To bring the keys too, put the key files in the same zip as the Config
+folder; anywhere inside it will do. The import then:
+
+- follows each session's key setting, including the global key in
+  `SSH2.ini` for sessions set to *Use global public key*, SecureCRT's
+  `${VDS_…}` path variables, and its `.ppk` fallback;
+- imports each key file once, however many sessions use it, and attaches it
+  to every one of them — unless SecureCRT was told to try the password first;
+- reads OpenSSH, PEM and PuTTY `.ppk` keys and stores them in your vault in
+  OpenSSH form.
+
+**No key passphrase is needed** for keys that do not have one, which is the
+usual case on managed laptops. SecureCRT never writes key passphrases to its
+configuration, so there is none to recover; a key that *is* protected by one
+is imported as it is, and the passphrase is entered on the credential.
+
+Two kinds of key cannot come across on their own, and the plan names each:
+
+- **SecureCRT's own key format.** VanDyke documents it only as proprietary.
+  In SecureCRT choose **Tools → Convert Private Key to OpenSSH Format**, save
+  the result in place of the original, and import again.
+- **Smart cards and tokens** (PKCS#11, Windows certificate store). There is
+  no file to copy; give those connections a key or password here instead.
+
+The settings XML from **Tools → Export Settings** holds key paths but not
+key files, so import the zipped Config folder when you want the keys.
 
 ---
 
